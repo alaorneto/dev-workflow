@@ -608,6 +608,23 @@ class SurroundingsTest(SandboxCase):
         self.assertEqual(len(comments), 1)
         self.assertIn("não publica versão", comments[0])
 
+    def test_a_preview_longer_than_a_comment_accepts_drops_the_table(self):
+        box = self.box
+        padding = " detalhe" * 500  # cada linha da tabela leva o título: 20 mudanças passam de 65 536
+        for number in range(10, 30):
+            box.merge_pr(number, f"fix: case {number}{padding}", [(f"fix: case {number}", None)])
+        branch = box.open_pr(40, "feat: add the export command", FEAT, labels=["release"])
+        args = ("release.py", "preview", "--pr", "40", "--base-ref", "main", "--head-ref", branch, "--comment")
+        out = self.assertRan(box.run(*args))
+        self.assertIn("| Mudança | Nível | Sinais |", out)  # a saída do check continua completa
+        self.assertNotIn("não consegui comentar", out)
+        comments = _bodies(box.state(), 40)
+        self.assertEqual(len(comments), 1)
+        self.assertLessEqual(len(comments[0]), 65_536)
+        self.assertIn("ao mesclar, este PR publica **v1.3.0** (minor)", comments[0])
+        self.assertIn("não cabe num comentário", comments[0])
+        self.assertNotIn("| Mudança | Nível | Sinais |", comments[0])
+
     def test_check_reads_the_pr_tree_with_the_base_configuration(self):
         box = self.box
         tree = box.base / "pr-head"
