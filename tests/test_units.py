@@ -12,7 +12,7 @@ from unittest import mock
 import support  # noqa: F401  (põe scripts/ no sys.path antes de importar devflow)
 from devflow import i18n
 from devflow.config import Config, ConfigError, load
-from devflow.plan import _glob_match, surface_hits, validate_analysis
+from devflow.plan import Change, _glob_match, resolve_request, surface_hits, validate_analysis
 from devflow.release import ReleaseError, fit_notes, rewrite, truncate_lines, update_changelog
 from devflow.semver import (
     Version,
@@ -189,6 +189,37 @@ class ConfigTest(unittest.TestCase):
                 Config(data)
             self.assertIn(f"`{key}`", str(raised.exception))
 
+    def test_each_channel_has_a_label_and_the_labels_cannot_collide(self):
+        cfg = Config()
+        labels = cfg.all_labels()
+        channel_labels = [name for name in labels if name.startswith("release:")]
+        self.assertEqual(channel_labels, ["release:alpha", "release:beta", "release:rc"])
+        self.assertIn("pré-release beta", labels["release:beta"][1])
+        self.assertEqual(cfg.requested_channels({"bug", "release:rc", "release:alpha"}), ["alpha", "rc"])
+        self.assertEqual(cfg.version_labels({"release:beta", "release", "semver:minor"}), ["release", "release:beta"])
+        self.assertEqual(cfg.version_labels({"wip"}), [])
+        on_pr = {"release", "release:beta", "release:nightly"}
+        self.assertEqual(cfg.unknown_channel_labels(on_pr), ["release:nightly"])
+
+        custom = Config({"labels": {"prerelease_prefix": "canal/"}, "versioning": {"prerelease": {"channels": ["rc"]}}})
+        self.assertIn("canal/rc", custom.all_labels())
+        self.assertNotIn("release:rc", custom.all_labels())
+        self.assertEqual(Config({"versioning": {"prerelease": {"channels": []}}}).version_labels({"release:rc"}), [])
+        self.assertNotIn("release:rc", Config({"versioning": {"enabled": False}}).all_labels())
+        refused = {
+            "vazio": {"labels": {"prerelease_prefix": ""}},
+            "não é texto": {"labels": {"prerelease_prefix": 3}},
+            "igual a um label extra": {"labels": {"extra": {"release:beta": {"color": "ededed"}}}},
+            "igual a uma sobreposição": {
+                "labels": {"prerelease_prefix": "semver:"},
+                "versioning": {"prerelease": {"channels": ["minor"]}},
+            },
+        }
+        for name, data in refused.items():
+            with self.subTest(name), self.assertRaises(ConfigError) as raised:
+                Config(data)
+            self.assertIn("`labels.prerelease_prefix`", str(raised.exception))
+
     def test_prerelease_channels_are_a_closed_list_in_semver_order(self):
         key = "`versioning.prerelease.channels`"
         pep440 = {"files": [{"path": "pyproject.toml", "search": 'version = "{current_pep440}"'}]}
@@ -231,6 +262,60 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(pattern.match("chore(release): v1.2.3 (#45)")["tag"], "v1.2.3")
         self.assertIsNone(pattern.match('Revert "chore(release): v1.2.3"'))
         self.assertIsNone(pattern.match("chore(release): v1.2.3 and more"))
+
+
+def _asked(number, *labels, fresh=True, kind="pr"):
+    return Change(kind, number, f"{number or 0:040x}", f"feat: change {number}", labels=set(labels), fresh=fresh)
+
+
+class RequestTest(unittest.TestCase):
+    """Quem pediu versão e qual pedido vence: final, depois os canais do mais ao menos maduro."""
+
+    def _resolve(self, *changes, forced=False, manual=None, cfg=None):
+        return resolve_request(list(changes), cfg or Config(), forced=forced, manual=manual)
+
+    def test_without_a_version_label_nothing_is_requested(self):
+        self.assertEqual(self._resolve(_asked(1), _asked(2, "bug", "semver:minor")), ([], None, []))
+        self.assertEqual(self._resolve(_asked(None, "release", kind="commit")), ([], None, []))
+
+    def test_the_release_label_asks_for_the_final_and_a_channel_label_for_its_prerelease(self):
+        self.assertEqual(self._resolve(_asked(1, "release")), (["#1"], None, []))
+        self.assertEqual(self._resolve(_asked(1), _asked(2, "release:beta")), (["#2"], "beta", []))
+
+    def test_the_most_mature_request_wins_and_the_plan_says_so(self):
+        asked = (_asked(1, "release:alpha"), _asked(2, "release:rc"), _asked(3, "release:beta"))
+        keys, channel, notes = self._resolve(*asked)
+        self.assertEqual((keys, channel), (["#1", "#2", "#3"], "rc"))
+        self.assertEqual(len(notes), 1)
+        self.assertIn("Vence o pedido mais maduro: #2 (`release:rc`)", notes[0])
+        self.assertIn("#1 (`release:alpha`), #3 (`release:beta`)", notes[0])
+
+        keys, channel, notes = self._resolve(_asked(1, "release:rc"), _asked(2, "release"))
+        self.assertEqual((keys, channel), (["#1", "#2"], None))
+        self.assertIn("Vence o pedido mais maduro: #2 (`release`)", notes[0])
+        # dois labels no mesmo PR (o check do PR reprova): o plano fica com o mais maduro
+        self.assertEqual(self._resolve(_asked(1, "release:alpha", "release:beta"))[1], "beta")
+
+    def test_a_request_counts_only_while_the_pr_is_new(self):
+        old = _asked(1, "release", fresh=False)
+        self.assertEqual(self._resolve(old), ([], None, []))
+        self.assertEqual(self._resolve(old, _asked(2, "release:alpha")), (["#2"], "alpha", []))
+
+    def test_a_manual_run_wins_over_the_labels(self):
+        keys, channel, notes = self._resolve(_asked(1, "release:beta"), forced=True, manual="rc")
+        self.assertEqual((keys, channel), (["#1"], "rc"))
+        self.assertIn("A execução manual pede a pré-release `rc`", notes[0])
+        self.assertIn("#1 (`release:beta`)", notes[0])
+        keys, channel, notes = self._resolve(_asked(1, "release:beta"), forced=True)
+        self.assertEqual(channel, None)
+        self.assertIn("A execução manual pede a versão final", notes[0])
+        self.assertEqual(self._resolve(_asked(1, "release:rc"), forced=True, manual="rc")[2], [])
+
+    def test_a_label_with_an_unknown_suffix_is_ignored_with_a_note(self):
+        keys, channel, notes = self._resolve(_asked(1, "release:nightly"))
+        self.assertEqual((keys, channel), ([], None))
+        self.assertIn("O label `release:nightly` em #1 não é um canal de pré-release deste projeto", notes[0])
+        self.assertIn("`release:alpha`, `release:beta`, `release:rc`", notes[0])
 
 
 class VersionFilesTest(unittest.TestCase):

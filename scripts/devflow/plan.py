@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -93,6 +94,7 @@ class Change:
     surfaces: list[SurfaceHit] = field(default_factory=list)
     analyzed: bool = False
     pending: bool = False  # PR ainda aberto, incluído numa prévia
+    fresh: bool = True  # novo: ainda não saiu em nenhuma pré-release do ciclo em andamento
 
     @property
     def key(self) -> str:
@@ -417,9 +419,15 @@ class Collector:
             pending=bool(data) and not data.get("merged", bool(data.get("merged_at"))),
         )
 
-    def collect(self, base: str | None, head: str) -> list[Change]:
+    def collect(self, base: str | None, head: str, cycle: Sequence[str] = ()) -> list[Change]:
+        """As mudanças de ``base..head``. ``cycle`` são as tags de pré-release do ciclo em andamento:
+        o que elas já alcançam continua na lista (a final cobre tudo), mas deixa de ser novidade."""
         marker = self.cfg.release_subject_pattern()
         changes: dict[str, Change] = {}
+        unreleased: set[str] | None = None
+        if cycle:
+            behind = [*([base] if base else []), *cycle]
+            unreleased = set(self.repo.git("log", "--first-parent", "--format=%H", head, "--not", *behind).split())
         for commit in self.repo.log(f"{base}..{head}" if base else head, first_parent=True):
             reverted = commit.subject[8:-1] if commit.subject.startswith('Revert "') else ""
             if marker.match(commit.subject) or (reverted and marker.match(reverted)):
@@ -438,6 +446,8 @@ class Collector:
                 change = changes.setdefault(commit.sha, Change("commit", None, commit.sha, commit.subject))
             change.commits += members
             change.surfaces += surface_hits(self.repo.name_status(parent, commit.sha), self.cfg)
+        for change in changes.values():
+            change.fresh = unreleased is None or change.sha in unreleased
         return self.finish(list(changes.values()))
 
     def pending_pr(self, number: int, base_ref: str, head_ref: str) -> Change:
@@ -558,10 +568,14 @@ def floor_requirement(cfg: Config, repo: Repo) -> tuple[Version, str] | None:
 
 
 def release_override(changes: list[Change], cfg: Config) -> Override | None:
-    """Sobreposição pedida no PR de release: label ``semver:*`` com o motivo na seção de versão."""
+    """Sobreposição pedida no PR que pede a versão: label ``semver:*`` com o motivo na seção de versão.
+
+    Vale enquanto o PR é novo, como o pedido dele: depois que uma pré-release o cobriu, a
+    sobreposição não é reaplicada às versões seguintes (o piso do ciclo impede que o alvo desça).
+    """
     prefix, chosen = cfg.label("override_prefix"), None
     for change in changes:
-        if cfg.label("release") not in change.labels:
+        if not change.fresh or not cfg.version_labels(change.labels):
             continue
         levels = [label[len(prefix) :] for label in change.labels if label.startswith(prefix)]
         levels = [level for level in levels if level in ("major", "minor", "patch")]
@@ -572,6 +586,51 @@ def release_override(changes: list[Change], cfg: Config) -> Override | None:
                 levels[0], reason or "(motivo não informado)", f"label `{prefix}{levels[0]}` em {change.key}"
             )
     return chosen
+
+
+def resolve_request(
+    changes: list[Change], cfg: Config, *, forced: bool, manual: str | None
+) -> tuple[list[str], str | None, list[str]]:
+    """Quem pediu versão, o canal que sai (``None`` é a versão final) e as notas da decisão.
+
+    Um pedido é o label de versão de um PR **novo**: ``release`` pede a final e ``release:<canal>``
+    a pré-release do canal. Depois que uma pré-release cobriu o PR, o pedido dele já foi atendido.
+    Vence o pedido mais maduro (final, depois os canais do mais ao menos maduro); a execução manual
+    (``--prerelease`` ou ``--force``) vence os labels naquela execução.
+    """
+    release, order = cfg.label("release"), cfg.prerelease_channels
+    notes: list[str] = []
+    asked: list[tuple[Change, str | None]] = []
+    for change in changes:
+        if change.kind != "pr" or not change.fresh:
+            continue
+        for label in cfg.unknown_channel_labels(change.labels):
+            accepted = ", ".join(f"`{cfg.channel_label(channel)}`" for channel in order) or "—"
+            notes.append(cfg.t("plan.request.unknown_label", label=label, change=change.key, accepted=accepted))
+        channels = cfg.requested_channels(change.labels)
+        if release in change.labels:
+            asked.append((change, None))
+        elif channels:
+            asked.append((change, channels[-1]))
+
+    def shown(items: list[tuple[Change, str | None]]) -> str:
+        return ", ".join(f"{change.key} (`{cfg.channel_label(ch) if ch else release}`)" for change, ch in items)
+
+    if manual:
+        channel: str | None = manual
+    elif forced or not asked or any(ch is None for _, ch in asked):
+        channel = None
+    else:
+        channel = max((ch for _, ch in asked if ch), key=order.index)
+    others = [(change, ch) for change, ch in asked if ch != channel]
+    winners = [(change, ch) for change, ch in asked if ch == channel]
+    if others and manual:
+        notes.append(cfg.t("plan.request.manual_prerelease", channel=manual, asked=shown(others)))
+    elif others and forced:
+        notes.append(cfg.t("plan.request.manual_final", asked=shown(others)))
+    elif others:
+        notes.append(cfg.t("plan.request.most_mature", winner=shown(winners), others=shown(others)))
+    return [change.key for change, _ in asked], channel, notes
 
 
 def build_plan(
@@ -588,19 +647,25 @@ def build_plan(
     extra_analyses: list[dict[str, Any]] | None = None,
     fixed_version: Version | None = None,
     exclude_tag: str | None = None,
+    collector: Collector | None = None,
 ) -> Plan:
-    """Calcula o plano para ``head``. ``pending=(PR, head_ref)`` simula o merge de um PR aberto."""
+    """Calcula o plano para ``head``. ``pending=(PR, head_ref)`` simula o merge de um PR aberto.
+
+    ``prerelease`` é o canal pedido pela execução manual; sem ele, o tipo da versão (final ou
+    pré-release de um canal) vem dos labels dos PRs novos (``resolve_request``).
+    """
     line = repo.line(head, exclude=exclude_tag)
     base_tag = line.final_tag
     initial = Version.parse(str(cfg.versioning["initial_version"]))
     base_version = line.final or initial
     files_version = line.current or initial
 
-    collector = Collector(cfg, repo, github)
-    changes = collector.collect(base_tag, head)
+    collector = collector or Collector(cfg, repo, github)
+    changes = collector.collect(base_tag, head, list(line.cycle))
     if pending is not None:
         changes.append(collector.pending_pr(pending[0], head, pending[1]))
     apply_analyses(changes, [*collector.recorded_analyses(changes), *(extra_analyses or [])])
+    requested_by, channel, request_notes = resolve_request(changes, cfg, forced=forced, manual=prerelease)
 
     plan = Plan(
         branch=branch,
@@ -609,13 +674,13 @@ def build_plan(
         base_version=base_version,
         files_version=files_version,
         changes=changes,
-        requested_by=[c.key for c in changes if c.kind == "pr" and cfg.label("release") in c.labels],
+        requested_by=requested_by,
         forced=forced,
         natural=max_level(change.level for change in changes),
         level="none",
         override=override or release_override(changes, cfg),
         version=None,
-        prerelease=prerelease,
+        prerelease=channel,
         previous_tag=line.current_tag,
         cycle=list(line.cycle),
     )
@@ -632,6 +697,7 @@ def build_plan(
         if forced:
             plan.problems.append("Nada se acumulou desde a última versão; não há o que publicar.")
         return plan
+    plan.notes += request_notes
     if plan.override:
         plan.level = plan.override.level
         target = base_version.final.bump(plan.level)  # a sobreposição é literal, inclusive para chegar a 1.0.0
@@ -668,20 +734,41 @@ def build_plan(
                 f"`{path}` declara o piso {version}, maior que a versão {target} que seria publicada. "
                 "Corrija o piso ou classifique a mudança de modo que a versão o alcance."
             )
+    if started and target.key() > started[1].key():
+        plan.notes.append(cfg.t("plan.cycle.target_changed", old=started[1], new=target, tag=started[0]))
     everything = repo.version_tags()
-    if prerelease:
-        target = next_prerelease(target, prerelease, everything.values(), cfg.prerelease_channels)
+    if channel:
+        final, allowed = target, cfg.prerelease_channels
+        target = next_prerelease(final, channel, everything.values(), allowed)
         ahead = not_surpassed(target, line.cycle.values())
-        if ahead is not None:
-            plan.problems.append(
+        if ahead is not None and not prerelease and ahead.pre[0] in allowed:
+            # Pedido por label: em vez de regredir, a pré-release sai no canal em que o ciclo já está.
+            plan.notes.append(
                 cfg.t(
-                    "plan.channel.regressed",
-                    channel=prerelease,
+                    "plan.request.promoted",
+                    label=cfg.channel_label(channel),
                     current=ahead.pre[0],
-                    core=target.core,
+                    core=final,
                     tag=f"{cfg.tag_prefix}{ahead}",
                 )
             )
+            channel = plan.prerelease = ahead.pre[0]
+            target = next_prerelease(final, channel, everything.values(), allowed)
+        elif ahead is not None:
+            plan.problems.append(
+                cfg.t(
+                    "plan.channel.regressed",
+                    channel=channel,
+                    current=ahead.pre[0],
+                    core=final,
+                    tag=f"{cfg.tag_prefix}{ahead}",
+                )
+            )
+        current = line.current
+        same = current is not None and current.final == final and current.pre[:1] == (channel,)
+        if prerelease and same and not any(change.fresh for change in changes):
+            # A promoção a um canal mais maduro não precisa de mudança nova; repetir o canal, sim.
+            plan.problems.append(cfg.t("plan.prerelease.nothing_new", tag=line.current_tag, channel=channel))
     plan.version = target
     elsewhere = sorted(
         (tag for tag, version in everything.items() if version.final == target.final and tag not in line.tags),
@@ -830,6 +917,10 @@ def plan_json(plan: Plan, cfg: Config) -> dict[str, Any]:
         "head": plan.head,
         "base_tag": plan.base_tag,
         "base_version": str(plan.base_version),
+        "previous_tag": plan.previous_tag,
+        "cycle": plan.cycle,
+        "type": "prerelease" if plan.prerelease else "final",
+        "channel": plan.prerelease,
         "requested": plan.requested,
         "requested_by": plan.requested_by,
         "natural_level": plan.natural,
@@ -851,6 +942,7 @@ def plan_json(plan: Plan, cfg: Config) -> dict[str, Any]:
                 "breaking": change.breaking,
                 "analyzed": change.analyzed,
                 "pending": change.pending,
+                "fresh": change.fresh,
                 "issues": [issue.__dict__ for issue in change.issues],
                 "signals": [signal.__dict__ for signal in change.signals],
                 "commits": [{"sha": commit.sha, "subject": commit.subject} for commit in change.commits],

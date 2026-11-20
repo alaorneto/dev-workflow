@@ -85,7 +85,37 @@ MESSAGES: dict[str, str] = {
     "config.channels.pep440_clash": (
         "has `{first}` and `{second}`, which become the same PEP 440 form (`{form}`); keep only one of them."
     ),
+    "config.prerelease_prefix.empty": "must be a non-empty string, for example `release:`.",
+    "config.prerelease_prefix.clash": (
+        "produces the label `{label}` for channel `{channel}`, which is already another label of the workflow; "
+        "change the prefix."
+    ),
     # --- version plan --------------------------------------------------------------------------
+    "plan.cycle.target_changed": (
+        "The target of the cycle changed from {old} to {new}: what accumulated now asks for more than {tag} "
+        "expected, and channel numbering starts over at {new}."
+    ),
+    "plan.request.unknown_label": (
+        "The label `{label}` on {change} is not a pre-release channel of this project ({accepted}) and asks for "
+        "no version."
+    ),
+    "plan.request.manual_prerelease": (
+        "The manual run asks for the `{channel}` pre-release and wins over the labels in this run; "
+        "requests from new PRs: {asked}."
+    ),
+    "plan.request.manual_final": (
+        "The manual run asks for the final version and wins over the labels in this run; "
+        "requests from new PRs: {asked}."
+    ),
+    "plan.request.most_mature": "The most mature request wins: {winner}. Also asked for a version: {others}.",
+    "plan.request.promoted": (
+        "The label `{label}` asks for a channel before `{current}`, which the {core} cycle has already published "
+        "({tag}): the pre-release goes out as `{current}`, because a channel never goes back."
+    ),
+    "plan.prerelease.nothing_new": (
+        "Nothing new since {tag}: another `{channel}` pre-release would be identical to it. To promote, ask for a "
+        "more mature channel; for the final version, run with `--force`."
+    ),
     "plan.cycle.floor": (
         "The cycle in progress has already published {tag}: the version does not go down, so the target stays at "
         "{floor} (the calculation would give {target})."
@@ -108,7 +138,58 @@ MESSAGES: dict[str, str] = {
         "Accepted channels (`versioning.prerelease.channels`): {accepted}."
     ),
     "release.channel.none": "This project accepts no pre-releases: `versioning.prerelease.channels` is empty.",
+    "release.beginning": "the beginning",
+    "release.nothing": (
+        "Nothing to release: {count} change(s) accumulated since {base}, none in a PR with a version label ({labels})."
+    ),
+    "release.nothing.cycle": (
+        "Nothing to release: {count} change(s) accumulated since {base}, {fresh} after {previous}; "
+        "none of these in a PR with a version label ({labels})."
+    ),
+    "report.cycle": "Pre-release cycle in progress: {cycle}. Current version: {current}.",
+    # --- preview and check of the version request ----------------------------------------------
+    "preview.prerelease.title": "### Version preview: when merged, this PR publishes the pre-release **{tag}** ({level})",
+    "preview.prerelease.body": (
+        "It includes this PR and {others} change(s) accumulated since {base}. It is a test version of the "
+        "`{channel}` channel: the changelog and the comments on the issues wait for the final version, requested "
+        "with `{release}`."
+    ),
+    "preview.prerelease.news": (
+        "New since {previous}: this PR and {fresh} change(s) that have not been in a pre-release yet."
+    ),
+    "preview.final.closes_cycle": (
+        "It closes the pre-release cycle in progress ({cycle}): it covers everything since {base}, and it is the "
+        "one that writes the changelog and the comments on the issues."
+    ),
+    "preview.pending.title": "### Version preview: this PR asks for no version, but it goes into **{tag}** ({level})",
+    "preview.pending.body": (
+        "A version request is still unanswered ({asked}): **{tag}** is not out yet, and this PR goes into it when "
+        "merged. If that is not the intention, wait for the version before merging, or remove the label from "
+        "whoever asked."
+    ),
+    "preview.none.channels": "With a channel label ({labels}), it would publish a pre-release of that number.",
+    "check.version_labels.many": (
+        "More than one version label ({labels}); keep only one: `{release}` publishes the final version, and each "
+        "channel label a pre-release."
+    ),
+    "check.version_labels.unknown": (
+        "The label `{label}` is not a pre-release channel of this project ({accepted}): it asks for no version."
+    ),
+    "evidence.version.prerelease": (
+        "**Version:** the PR asks for a pre-release of the `{channel}` channel. The final version, with the "
+        "changelog, comes later; the release automation comments here when it is out."
+    ),
+    "check.request.none": "PR #{pr} has no version label: it asks for no version, nothing to check.",
+    "check.request.ok": "PR #{pr}: the `{label}` request can be published ({tag}).",
+    "check.request.inherited": (
+        "PR #{pr}: the `{label}` request runs into {count} problem(s) that already exist without this PR (above). "
+        "The check does not fail for them, but the release stops until they are solved."
+    ),
+    "check.request.refused": (
+        "PR #{pr}: the `{label}` request cannot be published ({count} problem(s) above). Fix it or remove the label."
+    ),
     # --- labels (GitHub limits the description to 100 characters) -------------------------------
+    "label.prerelease": "Merging publishes a {channel} pre-release with everything accumulated",
     "label.epic": "Tracks a plan made of several issues",
     "label.release": "Merging publishes a version with everything accumulated; without it, the PR waits",
     "label.breaking": "Breaks compatibility for those who use the project",

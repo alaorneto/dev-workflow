@@ -4,12 +4,14 @@
 - ``next [--level L]``: só o próximo número.
 - ``check``: os arquivos de versão declarados estão coerentes com a versão corrente?
 - ``bump --to X [--dry-run]``: escreve uma versão nos arquivos declarados (uso manual).
-- ``preview --pr N --base-ref R --head-ref H [--comment]``: prévia de versão de um PR aberto.
+- ``preview --pr N --base-ref R --head-ref H [--comment | --check]``: prévia de versão de um PR
+  aberto; ``--check`` falha quando o pedido de versão do PR não pode ser publicado.
 - ``record-analysis --pr N --file F``: grava no PR a análise de versão feita por um agente.
 - ``baseline [--ref R] [--push]``: cria a tag de base quando o projeto ainda não tem tag.
 - ``run [--force] [--level L --reason "..."] [--prerelease canal] [--dry-run]``: publica o que
-  estiver pendente (``--prerelease`` já implica ``--force``). É a máquina de estados que o workflow de release executa; rodar de novo
-  depois de concluir não faz nada, e rodar depois de uma falha conclui o que faltou.
+  estiver pendente (``--prerelease`` já implica ``--force``). É a máquina de estados que o workflow de
+  release executa; rodar de novo depois de concluir não faz nada, e rodar depois de uma falha conclui
+  o que faltou.
 """
 
 from __future__ import annotations
@@ -580,11 +582,7 @@ def run(session: Session, args: argparse.Namespace) -> int:
             extra_analyses=analyses,
         )
         if not plan.requested:
-            pending = len(plan.changes)
-            print(
-                f"Nada a versionar: {pending} mudança(s) acumulada(s) desde {plan.base_tag or 'o início'}, "
-                f"nenhuma em PR marcado com `{cfg.label('release')}`."
-            )
+            print(nothing_to_release(plan, cfg))
             _output(released="false")
             return 0
         print(report(plan, cfg, session.links))
@@ -619,25 +617,67 @@ def run(session: Session, args: argparse.Namespace) -> int:
 # --- relatórios --------------------------------------------------------------------------------
 
 
+def version_label_list(cfg: Config) -> str:
+    """Os labels que pedem versão, como texto: o de release e um por canal."""
+    names = [cfg.label("release"), *(cfg.channel_label(channel) for channel in cfg.prerelease_channels)]
+    return ", ".join(f"`{name}`" for name in names)
+
+
+def nothing_to_release(plan: Plan, cfg: Config) -> str:
+    """Por que esta execução não publica: nenhum PR novo pediu versão."""
+    base = plan.base_tag or cfg.t("release.beginning")
+    if not plan.cycle:
+        return cfg.t("release.nothing", count=len(plan.changes), base=base, labels=version_label_list(cfg))
+    return cfg.t(
+        "release.nothing.cycle",
+        count=len(plan.changes),
+        base=base,
+        fresh=sum(1 for change in plan.changes if change.fresh),
+        previous=plan.previous_tag,
+        labels=version_label_list(cfg),
+    )
+
+
 def report(plan: Plan, cfg: Config, links: Links, *, pr: int | None = None, table_note: str | None = None) -> str:
+    """O plano em texto. Com ``pr``, é a prévia de um PR aberto, e o texto segue o que o plano
+    resolveu (final, pré-release de um canal ou nada), não só os labels do próprio PR."""
     lines: list[str] = []
     tag = plan.tag(cfg)
     release = cfg.label("release")
+    base = plan.base_tag or cfg.t("release.beginning")
     if pr is not None:
         current = next((change for change in plan.changes if change.number == pr), None)
         others = len(plan.changes) - 1
-        labels = current.labels if current else set()
-        if release in labels:
-            lines.append(f"### Prévia de versão: ao mesclar, este PR publica **{tag}** ({plan.level})")
+        asks = bool(current and cfg.version_labels(current.labels))
+        waiting = [change for change in plan.changes if change.key in plan.requested_by and change.number != pr]
+        if asks and plan.prerelease:
+            lines.append(cfg.t("preview.prerelease.title", tag=tag, level=plan.level))
             lines.append(
-                f"Entram nesta versão este PR e {others} mudança(s) já acumulada(s) desde {plan.base_tag or 'o início'}."
+                cfg.t("preview.prerelease.body", others=others, base=base, channel=plan.prerelease, release=release)
             )
+            if plan.cycle:
+                fresh = sum(1 for change in plan.changes if change.fresh) - 1
+                lines.append(cfg.t("preview.prerelease.news", previous=plan.previous_tag, fresh=fresh))
+        elif asks:
+            lines.append(f"### Prévia de versão: ao mesclar, este PR publica **{tag}** ({plan.level})")
+            since = plan.base_tag or "o início"
+            lines.append(f"Entram nesta versão este PR e {others} mudança(s) já acumulada(s) desde {since}.")
+            if plan.cycle:
+                cycle = ", ".join(plan.cycle)
+                lines.append(cfg.t("preview.final.closes_cycle", cycle=cycle, base=base))
+        elif waiting:
+            asked = ", ".join(f"{change.key} (`{cfg.version_labels(change.labels)[0]}`)" for change in waiting)
+            lines.append(cfg.t("preview.pending.title", tag=tag, level=plan.level))
+            lines.append(cfg.t("preview.pending.body", asked=asked, tag=tag))
         else:
             lines.append("### Prévia de versão: este PR não publica versão")
             lines.append(
                 f"Sem o label `{release}`, ele fica acumulado com {others} mudança(s) pendente(s) e entra na próxima "
                 f"versão. Com `{release}`, o merge publicaria **{tag}** ({plan.level})."
             )
+            channels = ", ".join(f"`{cfg.channel_label(channel)}`" for channel in cfg.prerelease_channels)
+            if channels:
+                lines.append(cfg.t("preview.none.channels", labels=channels))
     elif plan.version is None:
         lines.append(f"Nada acumulado desde {plan.base_tag or 'o início'}.")
     else:
@@ -645,10 +685,51 @@ def report(plan: Plan, cfg: Config, links: Links, *, pr: int | None = None, tabl
         lines.append(f"### Próxima versão: **{tag}** ({plan.level}) — {state}")
         if plan.requested_by:
             lines.append(f"Versão pedida por: {', '.join(plan.requested_by)}.")
+    if plan.cycle:
+        lines.append(cfg.t("report.cycle", cycle=", ".join(plan.cycle), current=plan.previous_tag))
     lines += ["", render_justification(plan, cfg, links, table_note=table_note)]
     if plan.problems:
         lines += ["", "**Problemas que impedem a release**", *(f"- {problem}" for problem in plan.problems)]
     return "\n".join(lines).strip() + "\n"
+
+
+def check_request(session: Session, args: argparse.Namespace, plan: Plan, collector: Collector) -> int:
+    """``preview --check``: reprova o PR quando o pedido de versão **dele** não pode ser publicado.
+
+    Sem label de versão o PR não pede nada, e não há o que reprovar. Com label, o plano é refeito
+    sem o PR, pedindo o mesmo tipo de versão: um problema que já existe sem ele (um piso que o
+    acumulado não alcança, por exemplo) não é dele, e só os que aparecem com ele contam.
+    """
+    cfg = session.cfg
+    current = next((change for change in plan.changes if change.number == args.pr), None)
+    labels = cfg.version_labels(current.labels) if current else []
+    if not labels:
+        print(cfg.t("check.request.none", pr=args.pr))
+        return 0
+    before = build_plan(
+        cfg,
+        session.repo,
+        session.github,
+        head=args.base_ref,
+        forced=True,
+        prerelease=plan.prerelease,
+        collector=collector,
+    )
+    own = [problem for problem in plan.problems if problem not in before.problems]
+    inherited = [problem for problem in plan.problems if problem in before.problems]
+    actions = bool(os.environ.get("GITHUB_ACTIONS"))
+    for problem in own:
+        print(f"::error title=Release::{problem}" if actions else f"ERRO: {problem}")
+    for problem in inherited:
+        print(f"::warning title=Release::{problem}" if actions else f"aviso: {problem}")
+    if own:
+        print(cfg.t("check.request.refused", pr=args.pr, label=labels[0], count=len(own)))
+        return 1
+    if inherited:
+        print(cfg.t("check.request.inherited", pr=args.pr, label=labels[0], count=len(inherited)))
+        return 0
+    print(cfg.t("check.request.ok", pr=args.pr, label=labels[0], tag=plan.tag(cfg)))
+    return 0
 
 
 def preview(session: Session, args: argparse.Namespace) -> int:
@@ -658,7 +739,11 @@ def preview(session: Session, args: argparse.Namespace) -> int:
         # não é o que o PR publicaria.
         print("Sem tag de versão alcançável: a prévia começa depois de `release.py baseline`.")
         return 0
-    plan = build_plan(cfg, session.repo, session.github, head=args.base_ref, pending=(args.pr, args.head_ref))
+    collector = Collector(cfg, session.repo, session.github)
+    pending = (args.pr, args.head_ref)
+    plan = build_plan(cfg, session.repo, session.github, head=args.base_ref, pending=pending, collector=collector)
+    if args.check:
+        return check_request(session, args, plan, collector)
     text = report(plan, cfg, session.links, pr=args.pr)
     print(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -776,6 +861,9 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--base-ref", required=True)
     command.add_argument("--head-ref", default="HEAD")
     command.add_argument("--comment", action="store_true")
+    command.add_argument(
+        "--check", action="store_true", help="não comenta: falha se o pedido de versão deste PR não pode ser publicado"
+    )
     command = sub.add_parser("record-analysis")
     command.add_argument("--pr", type=int, required=True)
     command.add_argument("--file", required=True)

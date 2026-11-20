@@ -1,7 +1,8 @@
 name: Análise de versão por agente
 
-# Skill dev-workflow (opcional): quando um PR recebe o label de release, o Claude Code lê o diff
-# de tudo que está acumulado desde a última tag e registra no PR o nível proposto, com evidências.
+# Skill dev-workflow (opcional): quando um PR recebe um label de versão (o de release ou um de
+# canal de pré-release), o Claude Code lê o diff de tudo que está acumulado desde a última versão
+# final e registra no PR o nível proposto, com evidências.
 # A análise só eleva o nível calculado pelos sinais determinísticos; nunca o reduz. Sem o segredo
 # ANTHROPIC_API_KEY (ou CLAUDE_CODE_OAUTH_TOKEN) os passos são pulados e a release segue só com
 # os sinais determinísticos.
@@ -23,8 +24,10 @@ jobs:
   analysis:
     name: Analisar o diff acumulado
     # PR de fork não recebe segredos nem token de escrita: fica fora.
+    # O segundo teste vale para os labels de canal: algum label começa pelo prefixo deles.
     if: >
-      contains(github.event.pull_request.labels.*.name, 'release') &&
+      (contains(github.event.pull_request.labels.*.name, 'release') ||
+      contains(format(',{0}', join(github.event.pull_request.labels.*.name, ',')), ',release:')) &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     env:

@@ -126,7 +126,7 @@ O "Plano de testes" de um bug sempre inclui um teste de regressão que falha ant
 
 ## Corpo de PR
 
-O título do PR segue Conventional Commits (`<tipo>(<escopo>): <assunto>`). Acrescente o label `release` só se o merge deve publicar versão; sem ele, o PR fica acumulado para a próxima.
+O título do PR segue Conventional Commits (`<tipo>(<escopo>): <assunto>`). Acrescente um label de versão só se o merge deve publicar: `release` para a versão final, ou um label de canal (`release:alpha`, `release:beta`, `release:rc`) para uma pré-release. Sem label, o PR fica acumulado para a próxima. Um label de versão só por PR.
 
 ~~~markdown
 ## Issues
@@ -144,7 +144,7 @@ Closes #<N>
 
 ## Versão
 - <impacto para quem usa o projeto: nenhum | correção | funcionalidade nova | quebra de compatibilidade + caminho de migração>
-<só com label semver:*:>
+<só com label semver:*, que exige um label de versão no mesmo PR:>
 - Motivo da sobreposição: <por que o nível calculado não vale aqui>
 ~~~
 

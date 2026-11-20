@@ -20,7 +20,7 @@ O que ele faz:
 | Gera os workflows a partir dos modelos | `.github/workflows/pr-check.yml`, `pr-merged.yml`, `release.yml`, `epic-checklist.yml`, `semver-analysis.yml` |
 | Copia os modelos | `.github/ISSUE_TEMPLATE/*.yml`, `.github/pull_request_template.md` |
 | Instala o hook `commit-msg` | `.git/hooks/commit-msg`; se o projeto usa pre-commit, mostra o trecho a acrescentar |
-| Cria os labels | Tipos, `epic`, `release`, `breaking-change`, `semver:major|minor|patch` |
+| Cria os labels | Tipos, `epic`, `release`, `release:alpha|beta|rc` (um por canal de pré-release), `breaking-change`, `semver:major|minor|patch` |
 
 Opções: `--default-branch`, `--initial-version`, `--no-labels`, `--selftest` (instala também o workflow que roda a suíte do skill), `--dry-run`, `--force` (troca arquivos que já existem; sem ele, nada existente é sobrescrito).
 

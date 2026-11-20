@@ -55,12 +55,15 @@ Um bloco por tipo de issue. O nome do bloco é o label.
 | Chave | Padrão |
 |---|---|
 | `epic` | `"epic"` |
-| `release` | `"release"`: o único label que faz o merge publicar versão |
+| `release` | `"release"`: o label que faz o merge publicar a versão final |
+| `prerelease_prefix` | `"release:"` (gera um label por canal de `versioning.prerelease.channels`: `release:alpha`, `release:beta`, `release:rc`). O merge de um PR com um deles publica a pré-release do canal |
 | `breaking` | `"breaking-change"` |
 | `override_prefix` | `"semver:"` (gera `semver:major`, `semver:minor`, `semver:patch`) |
 | `[labels.extra.<nome>]` | Labels adicionais que `sync-labels` cria (`color`, `description`) |
 
-Se trocar o label de release, ajuste a condição `if:` de `semver-analysis.yml` (o `bootstrap.py init --force` regenera).
+Um label de canal não pode ser igual a outro label do fluxo: a configuração é recusada. Um label com o prefixo e um sufixo que não é canal (`release:nightly`) não pede versão; o check do PR e o plano avisam.
+
+Se trocar o label de release ou o prefixo dos canais, ajuste a condição `if:` de `semver-analysis.yml`: à mão, ou com `bootstrap.py update --force`, que refaz os workflows com os labels da configuração (e desfaz o que foi personalizado neles).
 
 ## `[commits.levels]`
 
@@ -164,7 +167,7 @@ Versões que o código declara como "disponível desde". A release nunca sai com
 
 | Chave | Padrão | Significado |
 |---|---|---|
-| `channels` | `["alpha", "beta", "rc"]` | Canais de pré-release aceitos, do menos ao mais maduro. Canal fora da lista é recusado em `release.py run --prerelease` |
+| `channels` | `["alpha", "beta", "rc"]` | Canais de pré-release aceitos, do menos ao mais maduro. Cada um tem um label (`labels.prerelease_prefix` + canal) e pode ser pedido por `release.py run --prerelease`; canal fora da lista é recusado |
 
 A lista é conferida ao carregar a configuração:
 

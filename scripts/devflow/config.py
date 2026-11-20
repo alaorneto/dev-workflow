@@ -17,6 +17,7 @@ import fnmatch
 import os
 import re
 import tomllib
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,8 @@ BASE: dict[str, Any] = {
         "release": "release",
         "breaking": "breaking-change",
         "override_prefix": "semver:",
+        # Um label por canal de pré-release: `release:alpha`, `release:beta`, `release:rc`.
+        "prerelease_prefix": "release:",
         "extra": {},
     },
     "commits": {"levels": {"feat": "minor", "fix": "patch", "perf": "patch"}},
@@ -211,6 +214,7 @@ class Config:
             except re.error as exc:
                 _fail(f"{key}.regex", f"não é uma expressão regular válida: {exc}.")
         self._validate_channels()
+        self._validate_version_labels()
         r = d["release"]
         if r["mode"] not in RELEASE_MODES:
             _fail("release.mode", f"deve ser um de {', '.join(RELEASE_MODES)}.")
@@ -252,6 +256,25 @@ class Config:
                 else:
                     forms[form] = channel
 
+    def _validate_version_labels(self) -> None:
+        """Os labels de canal (prefixo + canal) não podem colidir com os outros labels do fluxo."""
+        labels = self.data["labels"]
+        prefix = labels.get("prerelease_prefix")
+        if not isinstance(prefix, str) or not prefix.strip():
+            _fail("labels.prerelease_prefix", self.t("config.prerelease_prefix.empty"))
+        taken = {
+            *self.types,
+            *labels["extra"],
+            *(str(labels[name]) for name in ("epic", "release", "breaking")),
+            *(self.override_label(level) for level in ("major", "minor", "patch")),
+        }
+        for channel in self.prerelease_channels:
+            if self.channel_label(channel) in taken:
+                _fail(
+                    "labels.prerelease_prefix",
+                    self.t("config.prerelease_prefix.clash", label=self.channel_label(channel), channel=channel),
+                )
+
     # --- tipos e labels --------------------------------------------------------------------
 
     @property
@@ -291,10 +314,33 @@ class Config:
             )
             for level, meaning in meanings:
                 labels[self.override_label(level)] = ("d4c5f9", self.t("label.override", level=level, meaning=meaning))
+            for channel in self.prerelease_channels:
+                labels[self.channel_label(channel)] = ("c2e0c6", self.t("label.prerelease", channel=channel))
         return labels
 
     def override_label(self, level: str) -> str:
         return f"{self.label('override_prefix')}{level}"
+
+    def channel_label(self, channel: str) -> str:
+        """O label que pede a pré-release de um canal (``release:beta``)."""
+        return f"{self.label('prerelease_prefix')}{channel}"
+
+    def requested_channels(self, labels: Iterable[str]) -> list[str]:
+        """Canais pedidos pelos labels de um PR, do menos ao mais maduro."""
+        present = set(labels)
+        return [channel for channel in self.prerelease_channels if self.channel_label(channel) in present]
+
+    def version_labels(self, labels: Iterable[str]) -> list[str]:
+        """Os labels de um PR que pedem versão: o de release (final) e os de canal (pré-release)."""
+        present = set(labels)
+        final = [self.label("release")] if self.label("release") in present else []
+        return final + [self.channel_label(channel) for channel in self.requested_channels(present)]
+
+    def unknown_channel_labels(self, labels: Iterable[str]) -> list[str]:
+        """Labels com o prefixo de canal cujo sufixo não é um canal do projeto: não pedem versão."""
+        prefix = self.label("prerelease_prefix")
+        known = {self.label("release"), *(self.channel_label(channel) for channel in self.prerelease_channels)}
+        return sorted(label for label in set(labels) if label.startswith(prefix) and label not in known)
 
     # --- demais seções ---------------------------------------------------------------------
 

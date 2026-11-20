@@ -181,6 +181,7 @@ def template_values(root: Path, skill_dir: str, branch: str, cfg: Config | None,
         "SKILL_PATH": "" if skill_dir == "." else f"{skill_dir}/",
         "DEFAULT_BRANCH": branch,
         "RELEASE_LABEL": cfg.label("release") if cfg else "release",
+        "PRERELEASE_PREFIX": cfg.label("prerelease_prefix") if cfg else "release:",
         "REPOSITORY_URL": f"https://github.com/{repository}",
     }
 

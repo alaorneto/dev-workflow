@@ -70,6 +70,11 @@ prefixes = ["chore", "build"]
 level = "none"
 section = "maintenance"
 
+# Os labels de canal de pré-release são este prefixo mais cada canal de
+# `versioning.prerelease.channels`: release:alpha, release:beta, release:rc.
+# [labels]
+# prerelease_prefix = "release:"
+
 # Labels adicionais que `sync-labels` também cria, por exemplo:
 # [labels.extra.security]
 # color = "b60205"
