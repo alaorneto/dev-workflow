@@ -2,6 +2,8 @@
 # Referência de todas as chaves: ./references/configuration.md
 # Confira com: python3 ./scripts/bootstrap.py doctor
 schema = 1
+# Idioma dos padrões e das mensagens: "pt-BR" (padrão) ou "en". Leia a referência antes de trocar.
+# language = "pt-BR"
 
 [repository]
 default_branch = "main"

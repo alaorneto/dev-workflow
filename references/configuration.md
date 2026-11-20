@@ -6,6 +6,32 @@ Os scripts procuram, nesta ordem: a variável `DEV_WORKFLOW_CONFIG`, `.github/de
 
 Sempre `1`.
 
+## `language`
+
+Idioma dos padrões e das mensagens: `"pt-BR"` (vale quando a chave falta) ou `"en"`. É uma chave da raiz do arquivo, antes da primeira tabela. Valor desconhecido é recusado.
+
+O idioma troca os **padrões** abaixo. O que o projeto escreve no arquivo continua valendo por cima deles, chave a chave.
+
+| Padrão | `pt-BR` | `en` |
+|---|---|---|
+| `issues.items_section` | `"Itens"` | `"Items"` |
+| `issues.depends_marker` | `"depende de"` | `"depends on"` |
+| `issues.acceptance_section` | `"Critérios de aceite"` | `"Acceptance criteria"` |
+| `issues.sections` | Contexto, Objetivo, Escopo… | Context, Goal, Scope… |
+| `pr.required_sections` | Issues, Resumo, Testes executados, Documentação, Versão | Issues, Summary, Tests run, Documentation, Version |
+| `pr.version_section`, `pr.tests_section`, `pr.docs_section` | `"Versão"`, `"Testes executados"`, `"Documentação"` | `"Version"`, `"Tests run"`, `"Documentation"` |
+| `pr.override_reason_marker` | `"Motivo da sobreposição"` | `"Override reason"` |
+| `changelog.intro` e os títulos de `changelog.sections` | Funcionalidades, Correções… | Features, Fixes… |
+| `description` de cada tipo e dos labels do fluxo | português | inglês |
+
+Não mudam com o idioma: os nomes dos labels, os prefixos de commit, o assunto do commit de release, as marcas em comentário HTML e as opções de linha de comando.
+
+Limites desta versão:
+
+- Com `en`, saem em inglês os padrões da tabela e as mensagens que já estão no catálogo (`scripts/devflow/locales/`). As demais mensagens dos scripts ainda saem em português.
+- Os modelos de issue e de PR que o `bootstrap.py` instala continuam em português: as seções deles não são as que os padrões em inglês exigem. Até os modelos em inglês existirem, quem usa `en` ajusta os modelos à mão.
+- Trocar o idioma de um projeto em uso muda os nomes de seção que o check exige nas issues e nos PRs abertos.
+
 ## `[repository]`
 
 | Chave | Padrão | Significado |

@@ -1,9 +1,17 @@
 """Regras puras: SemVer, leitura de texto, configuração, arquivos de versão e changelog."""
 
+import ast
+import json
+import os
+import string
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import support  # noqa: F401  (põe scripts/ no sys.path antes de importar devflow)
-from devflow.config import Config, ConfigError
+from devflow import i18n
+from devflow.config import Config, ConfigError, load
 from devflow.plan import _glob_match, surface_hits, validate_analysis
 from devflow.release import ReleaseError, fit_notes, rewrite, truncate_lines, update_changelog
 from devflow.semver import Version, effective_level, max_level, next_prerelease, next_version
@@ -19,6 +27,7 @@ from devflow.text import (
 )
 
 V = Version.parse
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 class SemverTest(unittest.TestCase):
@@ -319,6 +328,151 @@ class GlobTest(unittest.TestCase):
         cfg = Config({"versioning": {"public_surfaces": [{"name": "Scripts", "globs": ["scripts/*.py"]}]}})
         events = [("modify", "scripts/release.py"), ("modify", "scripts/devflow/semver.py")]
         self.assertEqual([hit.path for hit in surface_hits(events, cfg)], ["scripts/release.py"])
+
+
+def _placeholders(template):
+    return {name for _, name, _, _ in string.Formatter().parse(template) if name}
+
+
+def _restricted(value, reference):
+    """``value`` só com as chaves que ``reference`` tem, tabela a tabela."""
+    if isinstance(value, dict) and isinstance(reference, dict):
+        return {key: _restricted(value[key], reference[key]) for key in reference if key in value}
+    return value
+
+
+def _shape(value):
+    """A forma de um valor de configuração: as chaves de cada tabela e o tamanho de cada lista."""
+    if isinstance(value, dict):
+        return {key: _shape(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_shape(item) if isinstance(item, dict) else "" for item in value]
+    return ""
+
+
+def _message_calls():
+    """``(arquivo, linha, chave)`` de cada chamada ao catálogo e as chamadas sem chave literal."""
+    literal, dynamic = [], []
+    for path in sorted((support.SCRIPTS / "devflow").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        # As próprias funções ``t`` repassam a chave que receberam: não são uso do catálogo.
+        forwarding = {
+            id(call)
+            for function in ast.walk(tree)
+            if isinstance(function, ast.FunctionDef) and function.name == "t"
+            for call in ast.walk(function)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or id(node) in forwarding:
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name not in ("t", "translate"):
+                continue
+            arguments = node.args[1:] if name == "translate" else node.args
+            key = arguments[0] if arguments else None
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                literal.append((path.name, node.lineno, key.value))
+            else:
+                dynamic.append(f"{path.name}:{node.lineno}")
+    return literal, dynamic
+
+
+class LanguageTest(unittest.TestCase):
+    """Idioma: padrões por idioma, catálogo de mensagens e queda para o pt-BR."""
+
+    def test_without_the_key_the_configuration_is_exactly_the_previous_one(self):
+        golden = json.loads((FIXTURES / "config-defaults-pt-br.json").read_text(encoding="utf-8"))
+        labels = json.loads((FIXTURES / "labels-pt-br.json").read_text(encoding="utf-8"))
+        cfg = Config()
+        self.assertEqual(cfg.language, "pt-BR")
+        # O retrato é de antes da chave `language`: tudo que ele tem continua com o mesmo valor.
+        # Chaves criadas depois ficam de fora da comparação, mas não podem mudar as antigas.
+        self.assertEqual(_restricted(cfg.data, golden), golden)
+        self.assertNotIn("language", cfg.data)
+        self.assertEqual(list(cfg.types), list(golden["types"]))
+        current = {name: list(value) for name, value in cfg.all_labels().items()}
+        self.assertEqual({name: current.get(name) for name in labels}, labels)
+        explicit = Config({"language": "pt_br"})
+        self.assertEqual(explicit.data["language"], "pt-BR")
+        self.assertEqual({key: value for key, value in explicit.data.items() if key != "language"}, cfg.data)
+
+    def test_english_changes_what_depends_on_the_language_and_nothing_else(self):
+        en, pt = Config({"language": "en"}), Config()
+        self.assertEqual(en.pr["required_sections"], ["Issues", "Summary", "Tests run", "Documentation", "Version"])
+        self.assertEqual(en.pr["override_reason_marker"], "Override reason")
+        self.assertEqual((en.issues["items_section"], en.issues["depends_marker"]), ("Items", "depends on"))
+        self.assertEqual(en.issue_sections("bug")[:3], ["Observed behavior", "Expected behavior", "Steps to reproduce"])
+        self.assertEqual([item["title"] for item in en.changelog["sections"]][:2], ["⚠ Breaking changes", "Features"])
+        self.assertEqual(en.types["bug"]["description"], "Incorrect behavior or regression")
+        self.assertIn("Overrides the computed level: major", en.all_labels()["semver:major"][1])
+        for key in ("repository", "labels", "commits", "versioning", "release"):
+            self.assertEqual(en.data[key], pt.data[key], key)
+        self.assertEqual(_shape(en.data), {**_shape(pt.data), "language": ""})
+        self.assertEqual(
+            [item["id"] for item in en.changelog["sections"]], [item["id"] for item in pt.changelog["sections"]]
+        )
+        self.assertEqual(sorted(en.all_labels()), sorted(pt.all_labels()))
+        custom = Config({"language": "en", "pr": {"version_section": "Release"}})
+        self.assertEqual((custom.pr["version_section"], custom.pr["tests_section"]), ("Release", "Tests run"))
+
+    def test_an_unknown_language_is_refused_with_the_key(self):
+        for value in ("fr", "", 3):
+            with self.subTest(value), self.assertRaises(ConfigError) as raised:
+                Config({"language": value})
+            self.assertIn("`language`", str(raised.exception))
+            self.assertIn("pt-BR, en", str(raised.exception))
+
+    def test_a_missing_message_falls_back_and_never_raises(self):
+        portuguese = i18n.messages("pt-BR")["label.epic"]
+        with mock.patch.dict(i18n.messages("en")) as english:
+            del english["label.epic"]
+            self.assertEqual(i18n.translate("en", "label.epic"), portuguese)
+        self.assertEqual(i18n.translate("xx", "label.epic"), portuguese)
+        self.assertEqual(i18n.translate("en", "no.such.key", value=1), "no.such.key")
+        self.assertEqual(
+            i18n.translate("en", "label.override", level="major"), "Overrides the computed level: major ({meaning})"
+        )
+        with mock.patch.dict(i18n.messages("en"), {"label.epic": "broken {"}):
+            self.assertEqual(i18n.translate("en", "label.epic"), "broken {")
+
+    def test_load_sets_the_language_of_the_messages(self):
+        self.addCleanup(i18n.activate, i18n.active())
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / "dev-workflow.toml").write_text('schema = 1\nlanguage = "en"\n', encoding="utf-8")
+            with mock.patch.dict("os.environ"):
+                os.environ.pop("DEV_WORKFLOW_CONFIG", None)
+                cfg = load(Path(folder))
+            self.assertEqual((cfg.language, i18n.active()), ("en", "en"))
+            self.assertEqual(i18n.t("label.epic"), cfg.t("label.epic"))
+            (Path(folder) / "dev-workflow.toml").write_text("schema = 1\n", encoding="utf-8")
+            with mock.patch.dict("os.environ"):
+                os.environ.pop("DEV_WORKFLOW_CONFIG", None)
+                load(Path(folder))
+            self.assertEqual(i18n.active(), "pt-BR")
+
+    def test_both_catalogs_have_the_same_keys_and_placeholders(self):
+        portuguese, english = i18n.messages("pt-BR"), i18n.messages("en")
+        self.assertEqual(sorted(portuguese), sorted(english))
+        for key, template in portuguese.items():
+            with self.subTest(key):
+                self.assertEqual(_placeholders(template), _placeholders(english[key]))
+
+    def test_both_languages_define_the_same_defaults(self):
+        self.assertEqual(_shape(i18n.defaults("pt-BR")), _shape(i18n.defaults("en")))
+        self.assertIsNot(i18n.defaults("en")["pr"], i18n.defaults("en")["pr"])  # cópia: ninguém altera o idioma
+
+    def test_every_message_key_used_in_the_code_exists_and_none_is_left_over(self):
+        literal, dynamic = _message_calls()
+        self.assertEqual(dynamic, [], "a chave do catálogo tem de ser um texto literal na chamada")
+        catalog = i18n.messages("pt-BR")
+        self.assertEqual([call for call in literal if call[2] not in catalog], [])
+        self.assertEqual(sorted(set(catalog) - {key for _, _, key in literal}), [])
+
+    def test_label_descriptions_fit_the_github_limit(self):
+        for language in i18n.LANGUAGES:
+            for name, (_color, description) in Config({"language": language}).all_labels().items():
+                with self.subTest(language=language, label=name):
+                    self.assertLessEqual(len(description), 100)
 
 
 if __name__ == "__main__":

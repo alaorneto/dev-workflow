@@ -4,6 +4,10 @@ Tudo que é específico de um projeto (tipos de issue, seções, arquivos de ver
 públicas) vive nesse arquivo. Sem arquivo, valem os padrões abaixo, que bastam para o hook
 ``commit-msg``. As tabelas do arquivo se sobrepõem aos padrões chave a chave; ``types`` e as
 listas substituem o padrão por inteiro, para que um projeto possa ter menos tipos ou seções.
+
+Os padrões têm duas partes: a base neutra (``BASE``) e o que depende do idioma (``language``,
+``pt-BR`` quando a chave falta), que vem de ``locales/``. O idioma é lido dos dados crus antes
+da composição, porque é ele que decide quais padrões compor.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from . import i18n
 from .semver import LEVELS, ZERO_MAJOR_POLICIES, Version
 
 CONFIG_ENV = "DEV_WORKFLOW_CONFIG"
@@ -24,78 +29,20 @@ SURFACE_ACTIONS = (*LEVELS, "review")
 SEVERITIES = ("error", "warning", "off")
 RELEASE_MODES = ("direct", "pull-request")
 
-_COMMON_SECTIONS = [
-    "Contexto",
-    "Objetivo",
-    "Escopo",
-    "Abordagem técnica",
-    "Critérios de aceite",
-    "Plano de testes",
-    "Documentação a atualizar",
-    "Riscos e dependências",
-    "Definição de pronto",
-]
-
-DEFAULTS: dict[str, Any] = {
+# O que não depende do idioma. Nomes de seção, marcadores, títulos do changelog e descrições dos
+# tipos vêm do idioma (``locales/``) e são compostos sobre esta base em ``defaults_for``.
+BASE: dict[str, Any] = {
     "schema": 1,
     "repository": {"default_branch": "main", "release_branches": ["main", "release/*"]},
     "types": {
-        "bug": {
-            "color": "d73a4a",
-            "description": "Comportamento incorreto ou regressão",
-            "prefixes": ["fix"],
-            "level": "patch",
-            "section": "fixes",
-        },
-        "feature": {
-            "color": "1d76db",
-            "description": "Nova funcionalidade",
-            "prefixes": ["feat"],
-            "level": "minor",
-            "section": "features",
-        },
-        "enhancement": {
-            "color": "a2eeef",
-            "description": "Melhoria de funcionalidade existente",
-            "prefixes": ["feat", "perf"],
-            "level": "minor",
-            "section": "improvements",
-        },
-        "documentation": {
-            "color": "0075ca",
-            "description": "Somente documentação",
-            "prefixes": ["docs"],
-            "level": "none",
-            "section": "docs",
-        },
-        "refactor": {
-            "color": "fbca04",
-            "description": "Reestruturação sem mudança de comportamento",
-            "prefixes": ["refactor"],
-            "level": "none",
-            "section": "maintenance",
-        },
-        "test": {
-            "color": "bfd4f2",
-            "description": "Somente testes, fixtures ou evidência de verificação",
-            "prefixes": ["test"],
-            "level": "none",
-            "section": "maintenance",
-        },
-        "ci": {
-            "color": "5319e7",
-            "description": "Pipeline e checks automáticos",
-            "prefixes": ["ci"],
-            "level": "none",
-            "section": "maintenance",
-        },
-        "chore": {
-            "color": "c5def5",
-            "description": "Dependências, ferramentas e configuração de desenvolvimento",
-            "prefixes": ["chore", "build"],
-            "level": "none",
-            "section": "maintenance",
-        },
+        "bug": {"color": "d73a4a", "prefixes": ["fix"], "level": "patch", "section": "fixes"},
+        "feature": {"color": "1d76db", "prefixes": ["feat"], "level": "minor", "section": "features"},
+        "enhancement": {"color": "a2eeef", "prefixes": ["feat", "perf"], "level": "minor", "section": "improvements"},
+        "documentation": {"color": "0075ca", "prefixes": ["docs"], "level": "none", "section": "docs"},
+        "refactor": {"color": "fbca04", "prefixes": ["refactor"], "level": "none", "section": "maintenance"},
+        "test": {"color": "bfd4f2", "prefixes": ["test"], "level": "none", "section": "maintenance"},
+        "ci": {"color": "5319e7", "prefixes": ["ci"], "level": "none", "section": "maintenance"},
+        "chore": {"color": "c5def5", "prefixes": ["chore", "build"], "level": "none", "section": "maintenance"},
     },
     "labels": {
         "epic": "epic",
@@ -105,27 +52,8 @@ DEFAULTS: dict[str, Any] = {
         "extra": {},
     },
     "commits": {"levels": {"feat": "minor", "fix": "patch", "perf": "patch"}},
-    "issues": {
-        "items_section": "Itens",
-        "depends_marker": "depende de",
-        "acceptance_section": "Critérios de aceite",
-        "sections": {
-            "default": _COMMON_SECTIONS,
-            "bug": [
-                "Comportamento observado",
-                "Comportamento esperado",
-                "Passos para reproduzir",
-                *_COMMON_SECTIONS[2:],
-            ],
-            "documentation": ["Contexto", "Objetivo", "Critérios de aceite", "Definição de pronto"],
-        },
-    },
+    "issues": {},
     "pr": {
-        "required_sections": ["Issues", "Resumo", "Testes executados", "Documentação", "Versão"],
-        "version_section": "Versão",
-        "tests_section": "Testes executados",
-        "docs_section": "Documentação",
-        "override_reason_marker": "Motivo da sobreposição",
         "title_pattern": r"^(feat|fix|perf|docs|refactor|test|ci|chore|build|revert)(\([\w./ -]+\))?!?: \S.*",
         "exempt_authors": ["dependabot[bot]"],
         "severity": {
@@ -147,24 +75,7 @@ DEFAULTS: dict[str, Any] = {
         "public_surfaces": [],
         "floors": [],
     },
-    "changelog": {
-        "path": "CHANGELOG.md",
-        "title": "# Changelog",
-        "intro": (
-            "Todas as mudanças publicadas deste projeto. Este arquivo é escrito pela automação de release; "
-            "não edite as seções de versão à mão."
-        ),
-        "prereleases": False,
-        "hide": [],
-        "sections": [
-            {"id": "breaking", "title": "⚠ Mudanças incompatíveis"},
-            {"id": "features", "title": "Funcionalidades"},
-            {"id": "improvements", "title": "Melhorias"},
-            {"id": "fixes", "title": "Correções"},
-            {"id": "docs", "title": "Documentação"},
-            {"id": "maintenance", "title": "Manutenção"},
-        ],
-    },
+    "changelog": {"path": "CHANGELOG.md", "title": "# Changelog", "prereleases": False, "hide": []},
     "release": {
         "mode": "direct",
         "commit_message": "chore(release): {tag}",
@@ -173,6 +84,25 @@ DEFAULTS: dict[str, Any] = {
         "dispatch_workflow": "",
     },
 }
+
+
+def _overlay(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    """``extra`` sobre ``base``, tabela a tabela; listas e valores simples substituem."""
+    result = copy.deepcopy(base)
+    for key, value in extra.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _overlay(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
+def defaults_for(language: str) -> dict[str, Any]:
+    """Padrões completos de um idioma: a base neutra com o que o idioma define."""
+    return _overlay(BASE, i18n.defaults(language))
+
+
+DEFAULTS: dict[str, Any] = defaults_for(i18n.DEFAULT_LANGUAGE)
 
 BREAKING_SECTION = "breaking"
 FALLBACK_SECTION = "maintenance"
@@ -202,10 +132,21 @@ class Config:
     """Acesso tipado ao dicionário validado."""
 
     def __init__(self, data: dict[str, Any] | None = None, *, path: Path | None = None, root: Path | None = None):
-        self.data = _merge(DEFAULTS, data or {})
+        raw = dict(data or {})
+        language = i18n.normalize(raw.get("language", i18n.DEFAULT_LANGUAGE))
+        if language is None:
+            _fail("language", i18n.t("config.language.unknown", accepted=", ".join(i18n.LANGUAGES)))
+        self.language: str = str(language)
+        if "language" in raw:
+            raw["language"] = self.language
+        self.data = _merge(defaults_for(self.language), raw)
         self.path = path
         self.root = root or Path.cwd()
         self._validate()
+
+    def t(self, key: str, /, **values: Any) -> str:
+        """Mensagem do catálogo no idioma do projeto."""
+        return i18n.translate(self.language, key, **values)
 
     # --- validação -------------------------------------------------------------------------
 
@@ -302,17 +243,19 @@ class Config:
     def all_labels(self) -> dict[str, tuple[str, str]]:
         """Labels que o fluxo usa: ``{nome: (cor, descrição)}``."""
         labels = {name: (spec.get("color", "ededed"), spec.get("description", "")) for name, spec in self.types.items()}
-        labels[self.label("epic")] = ("3e4b9e", "Acompanhamento de um plano com várias issues")
+        labels[self.label("epic")] = ("3e4b9e", self.t("label.epic"))
         for name, spec in self.data["labels"]["extra"].items():
             labels[name] = (spec.get("color", "ededed"), spec.get("description", ""))
         if self.versioning_enabled:
-            labels[self.label("release")] = (
-                "0e8a16",
-                "O merge publica uma versão com tudo que está acumulado; sem este label, o PR fica acumulado",
+            labels[self.label("release")] = ("0e8a16", self.t("label.release"))
+            labels[self.label("breaking")] = ("b60205", self.t("label.breaking"))
+            meanings = (
+                ("major", self.t("label.override.major")),
+                ("minor", self.t("label.override.minor")),
+                ("patch", self.t("label.override.patch")),
             )
-            labels[self.label("breaking")] = ("b60205", "Quebra de compatibilidade para quem usa o projeto")
-            for level, text in (("major", "incompatível"), ("minor", "funcionalidade"), ("patch", "correção")):
-                labels[self.override_label(level)] = ("d4c5f9", f"Sobrepõe o nível calculado: {level} ({text})")
+            for level, meaning in meanings:
+                labels[self.override_label(level)] = ("d4c5f9", self.t("label.override", level=level, meaning=meaning))
         return labels
 
     def override_label(self, level: str) -> str:
@@ -402,9 +345,13 @@ def load(root: Path | None = None) -> Config:
     root = root or find_root()
     path = find_config(root)
     if path is None:
-        return Config(root=root)
+        cfg = Config(root=root)
+        i18n.activate(cfg.language)
+        return cfg
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"{path}: {exc}") from exc
-    return Config(data, path=path, root=root)
+    cfg = Config(data, path=path, root=root)
+    i18n.activate(cfg.language)  # mensagens de quem não recebe a configuração
+    return cfg
