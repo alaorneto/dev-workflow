@@ -465,6 +465,37 @@ class PullRequestModeTest(SandboxCase):
         self.assertEqual(len(_bodies(state, 10)), 1)
         self.assertIn("Nada a versionar", self.assertRan(box.release()))
 
+    def test_notes_longer_than_github_accepts_are_shortened_but_the_changelog_keeps_everything(self):
+        box = self.box
+        padding = " detalhe" * 500  # ~4 000 caracteres por entrada: 35 entradas passam dos dois limites
+        for number in range(1, 36):
+            box.issue(number, f"Corrigir o caso {number}{padding}", "bug")
+            labels = ["release"] if number == 35 else []
+            box.merge_pr(100 + number, f"fix: case {number}", [(f"fix: case {number}", None)], labels=labels, closes=[number])
+
+        out = self.assertRan(box.release())
+        self.assertIn("PR de release #1001 aberto para v1.2.1.", out)
+        body = box.state()["pulls"]["1001"]["body"]
+        self.assertLessEqual(len(body), 65_536)
+        self.assertIn("dev-workflow:release-pr", body)
+        self.assertIn("não cabe aqui", body)
+        self.assertNotIn("| Mudança | Nível | Sinais |", body)
+        self.assertIn("a lista completa está no [CHANGELOG.md](https://github.com/acme/demo/blob/release/next/CHANGELOG.md)", body)
+
+        box.git("fetch", "-q", "origin", "release/next")
+        box.git("merge", "-q", "--no-ff", "FETCH_HEAD", "-m", "Merge pull request #1001 from acme/release/next")
+        box.git("push", "-q", "origin", "main")
+        box.update_state(lambda state: state["pulls"]["1001"].update(state="closed", merged=True, merged_at="x"))
+        self.assertRan(box.release())
+        release = box.state()["releases"]["v1.2.1"]["body"]
+        self.assertLessEqual(len(release), 125_000)
+        self.assertIn("https://github.com/acme/demo/blob/v1.2.1/CHANGELOG.md", release)
+        changelog = box.read("CHANGELOG.md")
+        self.assertTrue(all(f"Corrigir o caso {number} " in changelog for number in range(1, 36)))
+        annotation = box.git("tag", "-l", "--format=%(contents)", "v1.2.1")
+        self.assertIn("| Mudança | Nível | Sinais |", annotation)
+        self.assertIn("Corrigir o caso 35 ", annotation)
+
     def test_a_squashed_release_pr_publishes_too(self):
         box = self._prepare()
         box.git("fetch", "-q", "origin", "release/next")
