@@ -184,7 +184,7 @@ A lista é conferida ao carregar a configuração:
 | `title`, `intro` | — | Cabeçalho escrito quando o arquivo é criado |
 | `sections` | incompatíveis, funcionalidades, melhorias, correções, documentação, manutenção | Lista ordenada de `{ id, title }`. Os ids `breaking` e `maintenance` são obrigatórios |
 | `hide` | `[]` | Ids de seções que ficam fora do arquivo; as notas da release mostram todas |
-| `prereleases` | `false` | `true` escreve também as pré-releases no arquivo |
+| `prereleases` | `false` | `true` escreve também as pré-releases no arquivo. Cada versão escreve uma seção com a lista inteira desde a última versão final e tira as seções das pré-releases anteriores do ciclo; depois da versão final, o arquivo fica só com a seção dela. O link do título de uma pré-release compara com a tag anterior |
 
 ## `[release]`
 

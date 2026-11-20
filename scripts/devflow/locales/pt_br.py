@@ -144,6 +144,12 @@ MESSAGES: dict[str, str] = {
         "nenhuma destas em PR com label de versão ({labels})."
     ),
     "report.cycle": "Ciclo de pré-releases em andamento: {cycle}. Versão corrente: {current}.",
+    # --- notas da versão -----------------------------------------------------------------------
+    "notes.news.title": "Novidades desde {previous}",
+    "notes.news.none": (
+        "Nada novo desde {previous}: esta versão leva o mesmo conteúdo ao canal `{channel}`."
+    ),
+    "notes.accumulated.title": "Acumulado desde {base}",
     # --- prévia e check do pedido de versão ----------------------------------------------------
     "preview.prerelease.title": "### Prévia de versão: ao mesclar, este PR publica a pré-release **{tag}** ({level})",
     "preview.prerelease.body": (

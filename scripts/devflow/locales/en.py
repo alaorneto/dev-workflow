@@ -147,6 +147,12 @@ MESSAGES: dict[str, str] = {
         "none of these in a PR with a version label ({labels})."
     ),
     "report.cycle": "Pre-release cycle in progress: {cycle}. Current version: {current}.",
+    # --- release notes -------------------------------------------------------------------------
+    "notes.news.title": "New since {previous}",
+    "notes.news.none": (
+        "Nothing new since {previous}: this version takes the same content to the `{channel}` channel."
+    ),
+    "notes.accumulated.title": "Everything since {base}",
     # --- preview and check of the version request ----------------------------------------------
     "preview.prerelease.title": "### Version preview: when merged, this PR publishes the pre-release **{tag}** ({level})",
     "preview.prerelease.body": (

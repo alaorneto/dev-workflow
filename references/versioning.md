@@ -49,7 +49,7 @@ Regras de borda:
 - Uma release pedida em que nenhum sinal pede incremento (só documentação, por exemplo) sobe o patch: toda versão publicada tem número novo.
 - A análise por agente acrescenta um sinal por mudança. Como vale o maior, ela **eleva e nunca reduz**. Reduzir é decisão do dono, por sobreposição.
 - O relatório (`release.py plan`, o comentário de prévia no PR e as notas da release) lista cada mudança com os sinais que contaram. Leia-o antes de aceitar o número.
-- O GitHub limita o tamanho do texto: 65 536 caracteres no corpo do PR de release e no comentário de prévia, 125 000 no da GitHub Release. Uma release que acumula muitas mudanças (a primeira de um projeto antigo, por exemplo) não cabe inteira. Nesse caso a tabela por mudança sai do texto, e, se ainda faltar espaço, o changelog é cortado em linha inteira com um link para o `CHANGELOG.md`. Nada se perde: o arquivo de changelog, a mensagem do commit de release e a tag anotada continuam com tudo.
+- O GitHub limita o tamanho do texto: 65 536 caracteres no corpo do PR de release e no comentário de prévia, 125 000 no da GitHub Release. Uma release que acumula muitas mudanças (a primeira de um projeto antigo, por exemplo) não cabe inteira. Nesse caso a tabela por mudança sai do texto, e, se ainda faltar espaço, o changelog é cortado em linha inteira com um link para o `CHANGELOG.md` (ou a indicação da tag anotada, quando a versão não escreve o arquivo: uma pré-release, por padrão). Nada se perde: o arquivo de changelog, a mensagem do commit de release e a tag anotada continuam com tudo.
 
 ## Versões 0.x
 
@@ -161,9 +161,11 @@ O **ciclo** são as pré-releases publicadas desde a última versão final (as t
 | | Pré-release | Final |
 |---|---|---|
 | Arquivos de versão | `X.Y.Z-canal.N` (`a`, `b` ou `rc` nos marcadores `_pep440`) | `X.Y.Z` |
-| `CHANGELOG.md` | Não escreve (padrão) | Seção completa, desde a última final |
-| GitHub Release | Marcada como pré-release, nunca "latest" | Como sempre |
+| `CHANGELOG.md` | Não escreve (padrão). Com `changelog.prereleases = true`, escreve a seção completa e tira as seções das pré-releases anteriores do ciclo | Seção completa, desde a última final; tira as seções de pré-release do ciclo |
+| GitHub Release e tag anotada | Marcada como pré-release, nunca "latest". As notas abrem com as novidades desde a tag anterior e trazem depois o acumulado | Como sempre: a lista inteira desde a última final |
 | Comentário "publicado na versão" e milestone | Não | Em todos os PRs e issues desde a última final |
+
+As notas de uma pré-release que continua um ciclo têm duas partes. "Novidades desde `<tag anterior>`" traz só o que entrou depois da pré-release anterior: é o que quem testa precisa conferir. "Acumulado desde `<última final>`" traz a lista inteira, que é o que a versão final vai publicar. Uma promoção sem mudança nova (de `beta` para `rc`, por execução manual) diz que nada mudou. O arquivo de changelog nunca repete: ele tem uma seção por versão publicada, sempre com a lista inteira, e as seções das pré-releases do ciclo saem quando a seguinte é escrita, mesmo que o alvo tenha mudado (`1.3.0-beta.2` sai ao publicar `2.0.0-beta.1`).
 
 A prévia no PR diz o que o merge publica em cada caso: nada (e o que sairia com cada label), a pré-release do canal e o que é novidade desde a anterior, a versão final e o ciclo que ela encerra, ou a versão que outro PR já pediu e ainda não saiu. `release.py status` mostra o ciclo em andamento.
 
@@ -189,7 +191,7 @@ Além do label no PR ([canais](#canais-alpha-beta-e-rc)), uma pré-release sai p
 gh workflow run release.yml -f prerelease=rc      # ou: python3 S/release.py run --prerelease rc
 ```
 
-Publica `X.Y.Z-rc.1` (depois `-rc.2`…), em que `X.Y.Z` é a versão que o acumulado pediria. O canal tem de ser um dos de `versioning.prerelease.channels` (padrão: `alpha`, `beta`, `rc`); outro texto é recusado com a lista dos aceitos. Escreve o número nos arquivos de versão (com `{current_pep440}` a forma é `X.Y.Zrc1`), cria a tag e uma GitHub Release marcada como pré-release. Não toca o changelog nem comenta PRs e issues: isso acontece na versão final, que cobre tudo desde a última versão final.
+Publica `X.Y.Z-rc.1` (depois `-rc.2`…), em que `X.Y.Z` é a versão que o acumulado pediria. O canal tem de ser um dos de `versioning.prerelease.channels` (padrão: `alpha`, `beta`, `rc`); outro texto é recusado com a lista dos aceitos. Escreve o número nos arquivos de versão (com `{current_pep440}` a forma é `X.Y.Zrc1`), cria a tag e uma GitHub Release marcada como pré-release. Não toca o changelog (salvo com `changelog.prereleases = true`) nem comenta PRs e issues: isso acontece na versão final, que cobre tudo desde a última versão final.
 
 Pedir um canal já é pedir a publicação: `--prerelease` dispensa `--force`. A execução manual vence os labels naquela execução e atende os pedidos pendentes. É também o caminho para **promover sem PR novo**: `--prerelease rc` depois de uma beta, ou `--force` para a versão final que encerra o ciclo. As regras do ciclo são as dos [canais](#canais-alpha-beta-e-rc), com duas diferenças:
 

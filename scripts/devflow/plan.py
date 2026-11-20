@@ -821,11 +821,11 @@ class Links:
         return f"PR {self.pull(change.number)}" if change.number is not None else self.commit(change.sha)
 
 
-def changelog_entries(plan: Plan, cfg: Config, links: Links) -> dict[str, list[str]]:
+def changelog_entries(changes: Sequence[Change], cfg: Config, links: Links) -> dict[str, list[str]]:
     """``{id da seção: [linhas]}``: uma linha por issue entregue; sem issue, uma linha por PR ou commit."""
     entries: dict[str, list[str]] = {}
     delivered: dict[int, tuple[str, str, list[str]]] = {}
-    for change in plan.changes:
+    for change in changes:
         reference = links.change(change)
         closing = [issue for issue in change.issues if issue.closing and issue.type]
         for issue in closing:
@@ -856,8 +856,11 @@ def changelog_entries(plan: Plan, cfg: Config, links: Links) -> dict[str, list[s
     return entries
 
 
-def render_changelog_body(plan: Plan, cfg: Config, links: Links, *, hide: bool = True) -> str:
-    entries = changelog_entries(plan, cfg, links)
+def render_changelog_body(
+    plan: Plan, cfg: Config, links: Links, *, hide: bool = True, changes: Sequence[Change] | None = None
+) -> str:
+    """As seções do changelog. ``changes`` restringe a lista: é como as notas mostram só as novidades."""
+    entries = changelog_entries(plan.changes if changes is None else changes, cfg, links)
     hidden = set(cfg.changelog["hide"]) if hide else set()
     blocks = []
     for item in cfg.changelog["sections"]:

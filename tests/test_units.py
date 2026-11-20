@@ -3,6 +3,7 @@
 import ast
 import json
 import os
+import re
 import string
 import tempfile
 import unittest
@@ -12,8 +13,16 @@ from unittest import mock
 import support  # noqa: F401  (põe scripts/ no sys.path antes de importar devflow)
 from devflow import i18n
 from devflow.config import Config, ConfigError, load
-from devflow.plan import Change, _glob_match, resolve_request, surface_hits, validate_analysis
-from devflow.release import ReleaseError, fit_notes, rewrite, truncate_lines, update_changelog
+from devflow.plan import Change, Links, Plan, _glob_match, resolve_request, surface_hits, validate_analysis
+from devflow.release import (
+    ReleaseError,
+    changelog_heading,
+    fit_notes,
+    release_notes,
+    rewrite,
+    truncate_lines,
+    update_changelog,
+)
 from devflow.semver import (
     Version,
     cycle_floor,
@@ -376,6 +385,123 @@ class ChangelogFileTest(unittest.TestCase):
         text = update_changelog(text, "1.1.1", "## [1.1.1] — d", "- one", self.cfg)
         self.assertIn("- ten", text)
         self.assertEqual(text.count("## ["), 2)
+
+    def _file(self, *versions):
+        text = None
+        for version in versions:
+            text = update_changelog(text, version, f"## [{version}](url) — d", f"- de {version}", self.cfg)
+        return text
+
+    @staticmethod
+    def _headings(text):
+        return re.findall(r"^## \[([^\]]+)\]", text, re.MULTILINE)
+
+    def test_a_release_drops_the_prerelease_sections_of_its_cycle(self):
+        text = self._file("1.2.0", "1.30.0", "1.3.0-beta.1", "1.3.0-beta.2")
+        cycle = [V("1.3.0-beta.1"), V("1.3.0-beta.2")]
+        final = update_changelog(text, "1.3.0", "## [1.3.0](url) — d", "- tudo", self.cfg, superseded=cycle)
+        self.assertEqual(self._headings(final), ["1.3.0", "1.30.0", "1.2.0"])
+        self.assertIn("## [1.3.0](url) — d\n\n- tudo\n\n## [1.30.0](url) — d\n\n- de 1.30.0\n\n", final)
+        self.assertTrue(final.endswith("## [1.2.0](url) — d\n\n- de 1.2.0\n"))
+        again = update_changelog(final, "1.3.0", "## [1.3.0](url) — d", "- tudo", self.cfg, superseded=cycle)
+        self.assertEqual(again, final)
+
+    def test_each_prerelease_replaces_the_previous_ones_even_when_the_target_changed(self):
+        text = self._file("1.2.0", "1.3.0-beta.1")
+        heading = "## [2.0.0-beta.1](url) — d"
+        text = update_changelog(text, "2.0.0-beta.1", heading, "- tudo", self.cfg, superseded=[V("1.3.0-beta.1")])
+        self.assertEqual(self._headings(text), ["2.0.0-beta.1", "1.2.0"])
+        # O arquivo que só tinha seções do ciclo fica como se a versão fosse a primeira.
+        only = self._file("1.3.0-beta.1")
+        final = update_changelog(only, "1.3.0", "## [1.3.0] — d", "- a", self.cfg, superseded=[V("1.3.0-beta.1")])
+        self.assertEqual(final, update_changelog(None, "1.3.0", "## [1.3.0] — d", "- a", self.cfg))
+
+    def test_only_the_versions_of_the_cycle_are_dropped(self):
+        text = self._file("1.3.0", "1.3.0-beta.10", "1.30.0-beta.1", "1.3.1-beta.1")
+        heading = "## [1.3.1-beta.2](url) — d"
+        kept = update_changelog(text, "1.3.1-beta.2", heading, "- x", self.cfg, superseded=[V("1.3.1-beta.1")])
+        self.assertEqual(self._headings(kept), ["1.3.1-beta.2", "1.30.0-beta.1", "1.3.0-beta.10", "1.3.0"])
+        untouched = update_changelog(text, "1.3.1", "## [1.3.1](url) — d", "- x", self.cfg)
+        left = ["1.3.1", "1.3.1-beta.1", "1.30.0-beta.1", "1.3.0-beta.10", "1.3.0"]
+        self.assertEqual(self._headings(untouched), left)
+        # A própria versão nunca é uma das que saem.
+        own = update_changelog(kept, "1.3.1-beta.2", heading, "- y", self.cfg, superseded=[V("1.3.1-beta.2")])
+        self.assertEqual(self._headings(own), self._headings(kept))
+        self.assertIn("- y", own)
+
+
+def _plan(changes, version, *, prerelease=None, previous_tag=None, cycle=()):
+    return Plan(
+        branch="main",
+        head="0" * 40,
+        base_tag="v1.2.0",
+        base_version=V("1.2.0"),
+        files_version=V("1.2.0"),
+        changes=list(changes),
+        requested_by=[],
+        forced=True,
+        natural="minor",
+        level="minor",
+        override=None,
+        version=V(version),
+        prerelease=prerelease,
+        previous_tag=previous_tag,
+        cycle=list(cycle),
+    )
+
+
+class PrereleaseNotesTest(unittest.TestCase):
+    cfg = Config()
+    links = Links("https://github.com/acme/demo")
+
+    def _beta_2(self, changes):
+        return _plan(changes, "1.3.0-beta.2", prerelease="beta", previous_tag="v1.3.0-beta.1", cycle=["v1.3.0-beta.1"])
+
+    def test_a_prerelease_opens_with_what_is_new_since_the_previous_tag(self):
+        plan = self._beta_2([_asked(31, fresh=False), _asked(32), _asked(33)])
+        notes = release_notes(plan, self.cfg, self.links)
+        self.assertTrue(notes.startswith("## Novidades desde v1.3.0-beta.1\n\n### Funcionalidades\n\n- change 32 "))
+        news, accumulated = notes.split("## Acumulado desde v1.2.0\n\n")
+        self.assertEqual([number for number in (31, 32, 33) if f"change {number} " in news], [32, 33])
+        self.assertEqual([number for number in (31, 32, 33) if f"change {number} " in accumulated], [31, 32, 33])
+        self.assertIn("### Por que este número", accumulated)
+
+    def test_the_first_prerelease_of_a_cycle_and_a_final_release_have_one_list(self):
+        changes = [_asked(31), _asked(32)]
+        first = _plan(changes, "1.3.0-beta.1", prerelease="beta", previous_tag="v1.2.0")
+        closing = [_asked(31, fresh=False), _asked(32)]
+        final = _plan(closing, "1.3.0", previous_tag="v1.3.0-beta.1", cycle=["v1.3.0-beta.1"])
+        for plan in (first, final):
+            notes = release_notes(plan, self.cfg, self.links)
+            self.assertTrue(notes.startswith("### Funcionalidades\n\n- change 31 "), notes)
+            self.assertNotIn("Novidades desde", notes)
+
+    def test_a_promotion_with_nothing_new_says_so(self):
+        old = [_asked(31, fresh=False)]
+        plan = _plan(old, "1.3.0-rc.1", prerelease="rc", previous_tag="v1.3.0-beta.1", cycle=["v1.3.0-beta.1"])
+        notes = release_notes(plan, self.cfg, self.links)
+        self.assertTrue(notes.startswith("## Novidades desde v1.3.0-beta.1\n\nNada novo desde v1.3.0-beta.1: "), notes)
+        self.assertIn("ao canal `rc`", notes)
+        self.assertIn("## Acumulado desde v1.2.0\n\n### Funcionalidades\n\n- change 31 ", notes)
+
+    def test_the_full_list_pointer_never_cites_a_file_that_was_not_written(self):
+        plan = self._beta_2([_asked(number, fresh=number > 40) for number in range(1, 61)])
+        cut = release_notes(plan, self.cfg, self.links, limit=2500, ref="v1.3.0-beta.2")
+        self.assertLessEqual(len(cut), 2500)
+        self.assertIn("a lista completa está na mensagem da tag anotada._", cut)
+        self.assertNotIn("CHANGELOG.md", cut)
+        written = Config({"changelog": {"prereleases": True}})
+        pointer = "no [CHANGELOG.md](https://github.com/acme/demo/blob/v1.3.0-beta.2/CHANGELOG.md)._"
+        self.assertIn(pointer, release_notes(plan, written, self.links, limit=2500, ref="v1.3.0-beta.2"))
+        final = _plan(plan.changes, "1.3.0", previous_tag="v1.3.0-beta.1", cycle=["v1.3.0-beta.1"])
+        self.assertIn("no [CHANGELOG.md](", release_notes(final, self.cfg, self.links, limit=2500, ref="v1.3.0"))
+
+    def test_the_heading_of_a_prerelease_compares_with_the_previous_tag(self):
+        heading = changelog_heading(self._beta_2([]), self.cfg, self.links)
+        compare = "https://github.com/acme/demo/compare/v1.3.0-beta.1...v1.3.0-beta.2"
+        self.assertIn(f"## [1.3.0-beta.2]({compare}) — ", heading)
+        final = _plan([], "1.3.0", previous_tag="v1.3.0-beta.2", cycle=["v1.3.0-beta.1", "v1.3.0-beta.2"])
+        self.assertIn("/compare/v1.2.0...v1.3.0) — ", changelog_heading(final, self.cfg, self.links))
 
 
 class NotesLimitTest(unittest.TestCase):

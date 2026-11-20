@@ -5,10 +5,11 @@ mesclados como o GitHub faria e ``release.py`` de verdade, em subprocesso, contr
 """
 
 import json
+import re
 import unittest
 
 import support  # noqa: F401  (põe scripts/ no sys.path antes de importar devflow)
-from support import BASE_CONFIG, PR_BODY, SandboxCase
+from support import BASE_CONFIG, BASE_FILES, PR_BODY, SandboxCase
 
 FIX = [("fix: handle the empty list", None)]
 FEAT = [("feat: add the export command", None)]
@@ -322,6 +323,95 @@ class ChannelPreviewTest(SandboxCase):
         out = self._preview(42, later)
         self.assertIn("este PR não pede versão, mas entra em **v1.3.0-beta.1** (minor)", out)
         self.assertIn("Há pedido de versão ainda não atendido (#32 (`release:beta`))", out)
+
+
+WHY = "### Por que este número"
+
+
+class PrereleaseNotesTest(SandboxCase):
+    def test_the_notes_open_with_what_is_new_and_a_resumed_release_says_the_same(self):
+        box = self.box
+        box.merge_pr(31, "feat: add the export command", FEAT, labels=["release:beta"])
+        self.assertRan(box.release())
+        first = box.state()["releases"]["v1.3.0-beta.1"]["body"]
+        self.assertTrue(first.startswith("### Funcionalidades\n\n- add the export command"), first)
+        self.assertNotIn("Novidades desde", first)
+
+        box.merge_pr(32, "fix: handle the empty list", FIX)
+        box.merge_pr(33, "fix: round half up", [("fix: round half up", None)], labels=["release:beta"])
+        # a criação da GitHub Release falha depois da tag: a execução seguinte conclui pelo caminho de retomada
+        box.update_state(lambda state: state.__setitem__("fail_release_once", True))
+        self.assertEqual(box.release().returncode, 1)
+        self.assertNotIn("v1.3.0-beta.2", box.state()["releases"])
+        annotation = box.git("tag", "--list", "--format=%(contents)", "v1.3.0-beta.2")
+        written = annotation.split("\n\n", 1)[1].split(WHY)[0]
+        self.assertTrue(written.startswith("## Novidades desde v1.3.0-beta.1\n\n### Correções\n\n"), written)
+        news, accumulated = written.split("## Acumulado desde v1.2.0\n\n")
+        self.assertIn("handle the empty list", news)
+        self.assertIn("round half up", news)
+        self.assertNotIn("add the export command", news)
+        for title in ("add the export command", "handle the empty list", "round half up"):
+            self.assertIn(title, accumulated)
+        self.assertFalse((box.work / "CHANGELOG.md").exists())
+
+        out = self.assertRan(box.release())
+        self.assertIn("A tag v1.3.0-beta.2 não tem GitHub Release; concluindo a publicação.", out)
+        resumed = box.state()["releases"]["v1.3.0-beta.2"]["body"]
+        self.assertEqual(resumed.split(WHY)[0], written)
+        self.assertNotIn("CHANGELOG.md", resumed)
+
+        # promoção sem nada novo: as notas dizem, e o acumulado continua inteiro
+        self.assertRan(box.release("--prerelease", "rc"))
+        promoted = box.state()["releases"]["v1.3.0-rc.1"]["body"]
+        self.assertTrue(promoted.startswith("## Novidades desde v1.3.0-beta.2\n\nNada novo desde v1.3.0-beta.2"))
+        self.assertIn("round half up", promoted.split("## Acumulado desde v1.2.0")[1])
+
+        # a final não separa: ela é a lista inteira desde a última final
+        box.merge_pr(34, "docs: explain the export", [("docs: explain the export", None)], labels=["release"])
+        self.assertRan(box.release())
+        final = box.state()["releases"]["v1.3.0"]["body"]
+        self.assertNotIn("Novidades desde", final)
+        self.assertIn("add the export command", final)
+
+
+class ChangelogWithPrereleasesTest(SandboxCase):
+    config = BASE_CONFIG + "\n[changelog]\nprereleases = true\n"
+    old = "# Changelog\n\nTexto do projeto.\n\n## [1.2.0] — 2030-01-01\n\n- antiga\n"
+    files = {**BASE_FILES, "CHANGELOG.md": old}
+
+    def _sections(self):
+        return re.findall(r"^## \[([^\]]+)\]\(([^)]*)\)", self.box.read("CHANGELOG.md"), re.MULTILINE)
+
+    def test_the_file_keeps_one_section_per_version_without_leftovers_of_the_cycle(self):
+        box = self.box
+        box.merge_pr(31, "feat: add the export command", FEAT, labels=["release:beta"])
+        self.assertRan(box.release())
+        self.assertEqual(
+            self._sections(), [("1.3.0-beta.1", "https://github.com/acme/demo/compare/v1.2.0...v1.3.0-beta.1")]
+        )
+
+        box.merge_pr(32, "fix: handle the empty list", FIX, labels=["release:beta"])
+        self.assertRan(box.release())
+        # uma seção só, com a lista inteira; o link compara com a pré-release anterior
+        self.assertEqual(
+            self._sections(),
+            [("1.3.0-beta.2", "https://github.com/acme/demo/compare/v1.3.0-beta.1...v1.3.0-beta.2")],
+        )
+        changelog = box.read("CHANGELOG.md")
+        self.assertEqual(changelog.count("add the export command"), 1)
+        self.assertIn("handle the empty list", changelog)
+
+        box.merge_pr(33, "feat!: drop the legacy client", BREAKING, labels=["release:rc"])
+        self.assertRan(box.release())
+        self.assertEqual([name for name, _ in self._sections()], ["2.0.0-rc.1"])  # o alvo mudou: 1.3.0-beta.* sai
+
+        box.merge_pr(34, "docs: explain the export", [("docs: explain the export", None)], labels=["release"])
+        self.assertRan(box.release())
+        self.assertEqual(self._sections(), [("2.0.0", "https://github.com/acme/demo/compare/v1.2.0...v2.0.0")])
+        changelog = box.read("CHANGELOG.md")
+        self.assertEqual(changelog.count("add the export command"), 1)
+        self.assertTrue(changelog.startswith("# Changelog\n\nTexto do projeto.\n\n## [2.0.0]("))
+        self.assertTrue(changelog.endswith("\n\n## [1.2.0] — 2030-01-01\n\n- antiga\n"))
 
 
 if __name__ == "__main__":

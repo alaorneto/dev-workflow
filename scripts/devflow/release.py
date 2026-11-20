@@ -23,7 +23,7 @@ import os
 import re
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +49,8 @@ from .text import MERGE_PR, REVERTS
 PREVIEW_MARK = "<!-- dev-workflow:preview -->"
 RELEASED_MARK = "<!-- dev-workflow:released {tag} -->"
 RELEASE_PR_MARK = "<!-- dev-workflow:release-pr -->"
-VERSION_HEADING = re.compile(r"^## \[?v?\d+\.\d+\.\d+", re.MULTILINE)
+# Título de seção de versão no changelog; `version` é o número inteiro, com o sufixo de pré-release.
+VERSION_HEADING = re.compile(r"^## \[?v?(?P<version>\d+\.\d+\.\d+[^\]\s(]*)", re.MULTILINE)
 REMOTE = "origin"
 BOT_NAME = "github-actions[bot]"
 BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
@@ -177,19 +178,60 @@ def tree_latest(cfg: Config, tree: Path) -> tuple[str, Version] | None:
 # --- changelog ---------------------------------------------------------------------------------
 
 
+def writes_changelog(plan: Plan, cfg: Config) -> bool:
+    """Esta versão escreve o arquivo de changelog? Uma pré-release só com `changelog.prereleases`."""
+    return bool(cfg.changelog["path"]) and (not plan.prerelease or bool(cfg.changelog["prereleases"]))
+
+
 def changelog_heading(plan: Plan, cfg: Config, links: Links) -> str:
+    """Título da seção. O link compara com a versão anterior: a última final, ou, numa pré-release,
+    a tag publicada antes dela."""
     version, tag = str(plan.version), plan.tag(cfg)
     date = datetime.datetime.now(datetime.UTC).date().isoformat()
-    if links.web and plan.base_tag:
-        return f"## [{version}]({links.web}/compare/{plan.base_tag}...{tag}) — {date}"
+    since = (plan.previous_tag if plan.prerelease else None) or plan.base_tag
+    if links.web and since:
+        return f"## [{version}]({links.web}/compare/{since}...{tag}) — {date}"
     if links.web:
         return f"## [{version}]({links.web}/releases/tag/{tag}) — {date}"
     return f"## {version} — {date}"
 
 
-def update_changelog(existing: str | None, version: str, heading: str, body: str, cfg: Config) -> str:
-    """Insere a seção da versão no topo; se ela já existe, substitui (reexecução idempotente)."""
+def cycle_versions(plan: Plan, cfg: Config) -> list[Version]:
+    """As pré-releases do ciclo em andamento, que a versão do plano substitui no changelog."""
+    prefix = cfg.tag_prefix
+    versions = (Version.try_parse(tag[len(prefix) :]) for tag in plan.cycle if tag.startswith(prefix))
+    return [version for version in versions if version is not None]
+
+
+def drop_sections(text: str, versions: Iterable[Version]) -> str:
+    """Tira de ``text`` as seções das versões dadas.
+
+    A versão é lida do título de cada seção e comparada inteira, nunca por prefixo de texto:
+    ``1.3.0-beta.1`` não se confunde com ``1.3.0``, ``1.3.0-beta.10`` nem ``1.30.0-beta.1``.
+    """
+    gone = set(versions)
+    matches = list(VERSION_HEADING.finditer(text)) if gone else []
+    kept, removed = [text[: matches[0].start()]] if matches else [text], False
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        if Version.try_parse(match.group("version")) in gone:
+            removed = True
+        else:
+            kept.append(text[match.start() : end])
+    return "".join(kept).rstrip("\n") + "\n" if removed else text
+
+
+def update_changelog(
+    existing: str | None, version: str, heading: str, body: str, cfg: Config, *, superseded: Iterable[Version] = ()
+) -> str:
+    """Insere a seção da versão no topo; se ela já existe, substitui (reexecução idempotente).
+
+    ``superseded`` são as pré-releases do ciclo que esta versão cobre: as seções delas saem, porque
+    a seção nova traz a lista inteira desde a última versão final.
+    """
     block = f"{heading}\n\n{body.strip()}\n"
+    if existing:
+        existing = drop_sections(existing, (old for old in superseded if str(old) != version))
     if not existing or not existing.strip():
         return f"{cfg.changelog['title']}\n\n{cfg.changelog['intro']}\n\n{block}"
     own = re.compile(rf"^## \[?v?{re.escape(version)}\]?(?=[\s(]|$)", re.MULTILINE)
@@ -240,6 +282,31 @@ def fit_notes(
     return truncate_lines(body + tail, limit, "_… texto cortado pelo limite do GitHub._")
 
 
+def notes_changelog(plan: Plan, cfg: Config, links: Links) -> str:
+    """A lista de mudanças das notas.
+
+    Numa pré-release que continua um ciclo, quem testa quer saber primeiro o que mudou desde a
+    pré-release anterior: as novidades abrem as notas e o acumulado desde a última final vem depois.
+    """
+    full = render_changelog_body(plan, cfg, links, hide=False)
+    fresh = [change for change in plan.changes if change.fresh]
+    if not (plan.prerelease and plan.cycle and plan.previous_tag) or len(fresh) == len(plan.changes):
+        return full
+    if fresh:
+        news = render_changelog_body(plan, cfg, links, hide=False, changes=fresh)
+    else:
+        news = cfg.t("notes.news.none", previous=plan.previous_tag, channel=plan.prerelease)
+    base = plan.base_tag or cfg.t("release.beginning")
+    return "\n\n".join(
+        (
+            "## " + cfg.t("notes.news.title", previous=plan.previous_tag),
+            news,
+            "## " + cfg.t("notes.accumulated.title", base=base),
+            full,
+        )
+    )
+
+
 def release_notes(
     plan: Plan, cfg: Config, links: Links, extra: str = "", *, limit: int | None = None, ref: str = ""
 ) -> str:
@@ -247,13 +314,13 @@ def release_notes(
 
     ``ref`` é a tag ou branch em que o ``CHANGELOG.md`` completo pode ser lido.
     """
-    changelog = render_changelog_body(plan, cfg, links, hide=False)
-    path = cfg.changelog["path"]
+    changelog = notes_changelog(plan, cfg, links)
+    path = cfg.changelog["path"] if writes_changelog(plan, cfg) else ""
     if path and links.web and ref:
         full_list = f"no [{path}]({links.web}/blob/{ref}/{path})"
     elif path:
         full_list = f"no `{path}`"
-    else:
+    else:  # sem arquivo, ou pré-release que não o escreve: a lista inteira está na anotação da tag
         full_list = "na mensagem da tag anotada"
     compact = render_justification(
         plan,
@@ -316,11 +383,15 @@ def prepare(session: Session, plan: Plan) -> str:
     tag = str(plan.tag(cfg))
     paths = apply_version_files(cfg, plan.files_version, plan.version)
     changelog = cfg.changelog["path"]
-    if changelog and (not plan.prerelease or cfg.changelog["prereleases"]):
+    if writes_changelog(plan, cfg):
         target = cfg.root / changelog
         existing = target.read_bytes().decode("utf-8") if target.is_file() else None
         body = render_changelog_body(plan, cfg, session.links)
-        updated = update_changelog(existing, str(plan.version), changelog_heading(plan, cfg, session.links), body, cfg)
+        heading = changelog_heading(plan, cfg, session.links)
+        # Uma seção por versão publicada: a lista inteira entra aqui, e as pré-releases do ciclo saem.
+        updated = update_changelog(
+            existing, str(plan.version), heading, body, cfg, superseded=cycle_versions(plan, cfg)
+        )
         target.write_bytes(updated.encode("utf-8"))
         paths.append(changelog)
     if paths:
