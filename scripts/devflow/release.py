@@ -546,6 +546,12 @@ def run(session: Session, args: argparse.Namespace) -> int:
         )
         _output(released="false")
         return 0
+    args.prerelease = (args.prerelease or "").strip().lower()
+    channels = cfg.prerelease_channels
+    if args.prerelease and args.prerelease not in channels:
+        if not channels:
+            raise ReleaseError(cfg.t("release.channel.none"))
+        raise ReleaseError(cfg.t("release.channel.unknown", channel=args.prerelease, accepted=", ".join(channels)))
     override = Override(args.level, args.reason or "(motivo não informado)", "execução manual") if args.level else None
     analyses = []
     if args.analysis_file:

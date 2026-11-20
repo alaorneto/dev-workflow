@@ -68,6 +68,29 @@ DEFAULTS: dict[str, Any] = {
 MESSAGES: dict[str, str] = {
     # --- configuração --------------------------------------------------------------------------
     "config.language.unknown": "não é um idioma aceito; use um de {accepted}.",
+    "config.prerelease.table": "deve ser uma tabela (`[versioning.prerelease]`) com a lista `channels`.",
+    "config.channels.type": 'deve ser uma lista de textos, por exemplo `["alpha", "beta", "rc"]`.',
+    "config.channels.name": (
+        "tem o canal `{channel}`, que não é um nome válido: use minúsculas, começando por letra "
+        "(letras, dígitos e hífen)."
+    ),
+    "config.channels.order": (
+        "deve ir do canal menos maduro ao mais maduro, na ordem de precedência do SemVer, que é alfabética (ASCII): "
+        "`{later}` não vem depois de `{earlier}`. É essa a ordem que os gerenciadores de pacote aplicam."
+    ),
+    "config.channels.pep440": (
+        "tem o canal `{channel}`, que não tem forma PEP 440, e `versioning.files` usa um marcador `_pep440`. "
+        "Canais com forma PEP 440: {accepted}."
+    ),
+    "config.channels.pep440_clash": (
+        "tem `{first}` e `{second}`, que viram a mesma forma PEP 440 (`{form}`); deixe só um deles."
+    ),
+    # --- release -------------------------------------------------------------------------------
+    "release.channel.unknown": (
+        "Canal de pré-release `{channel}` fora da lista do projeto. "
+        "Canais aceitos (`versioning.prerelease.channels`): {accepted}."
+    ),
+    "release.channel.none": "Este projeto não aceita pré-releases: `versioning.prerelease.channels` está vazio.",
     # --- labels (o GitHub limita a descrição a 100 caracteres) ----------------------------------
     "label.epic": "Acompanhamento de um plano com várias issues",
     "label.release": "O merge publica uma versão com tudo que está acumulado; sem este label, o PR fica acumulado",

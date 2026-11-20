@@ -132,7 +132,7 @@ Pelo workflow é preferível: usa a identidade e as permissões do CI. Localment
 gh workflow run release.yml -f force=true -f prerelease=rc
 ```
 
-Publica `X.Y.Z-rc.1` (depois `-rc.2`…), em que `X.Y.Z` é a versão que o acumulado pediria. Escreve o número nos arquivos de versão (com `{current_pep440}` a forma é `X.Y.Zrc1`), cria a tag e uma GitHub Release marcada como pré-release. Não toca o changelog nem comenta PRs e issues: isso acontece na versão final, que cobre tudo desde a última versão final.
+Publica `X.Y.Z-rc.1` (depois `-rc.2`…), em que `X.Y.Z` é a versão que o acumulado pediria. O canal tem de ser um dos de `versioning.prerelease.channels` (padrão: `alpha`, `beta`, `rc`); outro texto é recusado com a lista dos aceitos. Escreve o número nos arquivos de versão (com `{current_pep440}` a forma é `X.Y.Zrc1`), cria a tag e uma GitHub Release marcada como pré-release. Não toca o changelog nem comenta PRs e issues: isso acontece na versão final, que cobre tudo desde a última versão final.
 
 Como um PR `release` publica a versão final assim que é mesclado, as pré-releases servem para o período em que os PRs entram sem `release`.
 

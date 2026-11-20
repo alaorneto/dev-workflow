@@ -68,6 +68,29 @@ DEFAULTS: dict[str, Any] = {
 MESSAGES: dict[str, str] = {
     # --- configuration -------------------------------------------------------------------------
     "config.language.unknown": "is not an accepted language; use one of {accepted}.",
+    "config.prerelease.table": "must be a table (`[versioning.prerelease]`) with the `channels` list.",
+    "config.channels.type": 'must be a list of strings, for example `["alpha", "beta", "rc"]`.',
+    "config.channels.name": (
+        "has the channel `{channel}`, which is not a valid name: use lowercase, starting with a letter "
+        "(letters, digits and hyphen)."
+    ),
+    "config.channels.order": (
+        "must go from the least to the most mature channel, in SemVer precedence order, which is alphabetical "
+        "(ASCII): `{later}` does not come after `{earlier}`. That is the order package managers apply."
+    ),
+    "config.channels.pep440": (
+        "has the channel `{channel}`, which has no PEP 440 form, and `versioning.files` uses a `_pep440` marker. "
+        "Channels with a PEP 440 form: {accepted}."
+    ),
+    "config.channels.pep440_clash": (
+        "has `{first}` and `{second}`, which become the same PEP 440 form (`{form}`); keep only one of them."
+    ),
+    # --- release -------------------------------------------------------------------------------
+    "release.channel.unknown": (
+        "Pre-release channel `{channel}` is not in the project's list. "
+        "Accepted channels (`versioning.prerelease.channels`): {accepted}."
+    ),
+    "release.channel.none": "This project accepts no pre-releases: `versioning.prerelease.channels` is empty.",
     # --- labels (GitHub limits the description to 100 characters) -------------------------------
     "label.epic": "Tracks a plan made of several issues",
     "label.release": "Merging publishes a version with everything accumulated; without it, the PR waits",

@@ -98,6 +98,11 @@ zero_major = "breaking-is-minor"
 # true: mudança em superfície pública só é publicada com análise registrada ou sobreposição.
 require_analysis = false
 
+# Canais de pré-release aceitos, do menos ao mais maduro. A ordem tem de ser a de precedência do
+# SemVer (alfabética); com arquivo em PEP 440, cada canal precisa ter forma PEP 440.
+# [versioning.prerelease]
+# channels = ["alpha", "beta", "rc"]
+
 # Onde a versão é escrita. `search` é texto literal com {current}; a troca padrão põe {new} no
 # lugar. Use `regex` + `replace` quando o texto não contém a versão corrente inteira.
 # Marcadores: {current} {new} e, para cada um, _pep440 _core _major _minor _patch _next_minor _next_major.

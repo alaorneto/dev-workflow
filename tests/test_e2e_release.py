@@ -689,6 +689,21 @@ class PrereleaseAndMaintenanceTest(SandboxCase):
         self.assertIn("Exportar em CSV", changelog)
         self.assertEqual(len(_bodies(box.state(), 10)), 1)
 
+    def test_a_channel_outside_the_project_list_is_refused(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT)
+        refused = box.release("--force", "--prerelease", "nightly")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("`nightly` fora da lista do projeto", refused.stderr)
+        self.assertIn("alpha, beta, rc", refused.stderr)
+        self.assertEqual((box.tags(), box.state()["releases"]), (["v1.2.0"], {}))
+
+        # o canal da lista sai na forma de cada arquivo: SemVer no package.json, PEP 440 no pyproject.toml
+        self.assertRan(box.release("--force", "--prerelease", "BETA"))
+        self.assertEqual(box.tags(), ["v1.2.0", "v1.3.0-beta.1"])
+        self.assertIn('version = "1.3.0b1"', box.read("pyproject.toml"))
+        self.assertIn('"version": "1.3.0-beta.1"', box.read("package.json"))
+
     def test_a_maintenance_branch_releases_a_patch_that_is_not_the_latest(self):
         box = self.box
         box.merge_pr(10, "feat: add the export command", FEAT, labels=["release"])

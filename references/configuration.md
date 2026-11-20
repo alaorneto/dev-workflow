@@ -160,6 +160,19 @@ Versões que o código declara como "disponível desde". A release nunca sai com
 | `globs` | Arquivos versionados a ler, com a mesma sintaxe das superfícies públicas |
 | `regex` | Expressão com um grupo de captura que contém a versão |
 
+### `[versioning.prerelease]`
+
+| Chave | Padrão | Significado |
+|---|---|---|
+| `channels` | `["alpha", "beta", "rc"]` | Canais de pré-release aceitos, do menos ao mais maduro. Canal fora da lista é recusado em `release.py run --prerelease` |
+
+A lista é conferida ao carregar a configuração:
+
+- Nomes em minúsculas, começando por letra (letras, dígitos e hífen).
+- A ordem é a de precedência do SemVer, que compara os canais em ordem alfabética (ASCII). `["beta", "alpha"]` é recusado, e `snapshot` não cabe antes de `rc`: todo gerenciador de pacote trataria `1.3.0-snapshot.1` como mais novo que `1.3.0-rc.1`.
+- Se algum `[[versioning.files]]` usa um marcador `_pep440`, cada canal precisa ter forma PEP 440 (`alpha` ou `a` → `a`; `beta` ou `b` → `b`; `rc`, `c`, `pre` ou `preview` → `rc`), e dois canais não podem dar a mesma forma. Sem isso, `1.3.0-dev.1` iria para um `pyproject.toml`, onde não é uma versão válida.
+- Lista vazia desliga as pré-releases.
+
 ## `[changelog]`
 
 | Chave | Padrão | Significado |

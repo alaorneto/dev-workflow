@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 LEVELS = ("none", "patch", "minor", "major")
@@ -15,7 +15,15 @@ _SEMVER = re.compile(
     rf"(?:-(?P<pre>{_IDENT}(?:\.{_IDENT})*))?"
     r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
-_PEP440_CHANNELS = {"alpha": "a", "a": "a", "beta": "b", "b": "b", "rc": "rc", "c": "rc", "pre": "rc", "preview": "rc"}
+# Canais que têm forma PEP 440 e a forma de cada um (``1.2.0-beta.1`` vira ``1.2.0b1``).
+PEP440_CHANNELS = {"alpha": "a", "a": "a", "beta": "b", "b": "b", "rc": "rc", "c": "rc", "pre": "rc", "preview": "rc"}
+# Nome de canal aceito na configuração: minúsculas, para que a ordem ASCII seja a do SemVer.
+CHANNEL_NAME = re.compile(r"[a-z][0-9a-z-]*")
+
+
+def pep440_channel(channel: str) -> str | None:
+    """A forma PEP 440 do canal (``a``, ``b`` ou ``rc``), ou ``None`` quando ele não tem."""
+    return PEP440_CHANNELS.get(channel.lower())
 
 
 @dataclass(frozen=True)
@@ -72,7 +80,7 @@ class Version:
         """Forma PEP 440 para os canais conhecidos (``1.2.0-rc.1`` vira ``1.2.0rc1``)."""
         if not self.pre:
             return self.core
-        channel = _PEP440_CHANNELS.get(self.pre[0].lower())
+        channel = pep440_channel(self.pre[0])
         if channel is None or len(self.pre) > 2 or (len(self.pre) == 2 and not self.pre[1].isdigit()):
             return str(self)
         return f"{self.core}{channel}{self.pre[1] if len(self.pre) == 2 else 0}"
@@ -115,10 +123,17 @@ def next_version(current: Version, level: str, zero_major: str = "breaking-is-mi
     return current.final.bump(effective_level(current, level, zero_major))
 
 
-def next_prerelease(target: Version, channel: str, existing: Iterable[Version]) -> Version:
-    """Próxima pré-release de ``target`` no canal: ``1.2.0-rc.1``, depois ``-rc.2``."""
+def next_prerelease(
+    target: Version, channel: str, existing: Iterable[Version], allowed: Sequence[str] | None = None
+) -> Version:
+    """Próxima pré-release de ``target`` no canal: ``1.2.0-rc.1``, depois ``-rc.2``.
+
+    ``allowed`` é a lista de canais do projeto; um canal fora dela é recusado.
+    """
     if not re.fullmatch(r"[A-Za-z][0-9A-Za-z-]*", channel):
         raise ValueError(f"Canal de pré-release inválido: '{channel}'.")
+    if allowed is not None and channel not in allowed:
+        raise ValueError(f"Canal de pré-release '{channel}' fora da lista do projeto ({', '.join(allowed) or 'vazia'}).")
     numbers = [
         int(version.pre[1])
         for version in existing

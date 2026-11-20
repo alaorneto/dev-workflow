@@ -80,6 +80,11 @@ class SemverTest(unittest.TestCase):
         self.assertEqual(str(next_prerelease(V("2.0.0"), "rc", existing)), "2.0.0-rc.1")
         with self.assertRaises(ValueError):
             next_prerelease(V("1.3.0"), "r c", [])
+        allowed = ["alpha", "beta", "rc"]
+        self.assertEqual(str(next_prerelease(V("1.3.0"), "beta", existing, allowed)), "1.3.0-beta.8")
+        with self.assertRaises(ValueError) as raised:
+            next_prerelease(V("1.3.0"), "nightly", existing, allowed)
+        self.assertIn("alpha, beta, rc", str(raised.exception))
 
     def test_pep440_form(self):
         self.assertEqual(V("1.3.0-rc.1").pep440(), "1.3.0rc1")
@@ -157,6 +162,42 @@ class ConfigTest(unittest.TestCase):
             with self.subTest(key), self.assertRaises(ConfigError) as raised:
                 Config(data)
             self.assertIn(f"`{key}`", str(raised.exception))
+
+    def test_prerelease_channels_are_a_closed_list_in_semver_order(self):
+        key = "`versioning.prerelease.channels`"
+        pep440 = {"files": [{"path": "pyproject.toml", "search": 'version = "{current_pep440}"'}]}
+
+        def channels(names, **versioning):
+            return Config({"versioning": {"prerelease": {"channels": names}, **versioning}})
+
+        self.assertEqual(Config().prerelease_channels, ["alpha", "beta", "rc"])
+        self.assertEqual(channels(["dev", "nightly", "rc"]).prerelease_channels, ["dev", "nightly", "rc"])
+        self.assertEqual(channels([]).prerelease_channels, [])
+        self.assertEqual(channels(["alpha", "beta", "preview"], **pep440).prerelease_channels[-1], "preview")
+        refused = {
+            "ordem trocada": (["beta", "alpha"], {}, "`alpha` não vem depois de `beta`"),
+            "canal repetido": (["rc", "rc"], {}, "`rc` não vem depois de `rc`"),
+            "snapshot acima de rc": (["alpha", "snapshot", "rc"], {}, "`rc` não vem depois de `snapshot`"),
+            "maiúsculas": (["Alpha"], {}, "`Alpha`"),
+            "começa por dígito": (["1rc"], {}, "`1rc`"),
+            "não é lista": ("rc", {}, "lista de textos"),
+            "sem forma PEP 440": (["alpha", "dev"], pep440, "`dev`, que não tem forma PEP 440"),
+            "mesma forma PEP 440": (["a", "alpha"], pep440, "`a` e `alpha`"),
+            "pre e rc": (["pre", "rc"], pep440, "(`rc`)"),
+        }
+        for name, (names, versioning, expected) in refused.items():
+            with self.subTest(name), self.assertRaises(ConfigError) as raised:
+                channels(names, **versioning)
+            self.assertIn(key, str(raised.exception))
+            self.assertIn(expected, str(raised.exception))
+        with self.assertRaises(ConfigError) as raised:
+            channels(["beta", "alpha"])
+        self.assertIn("precedência do SemVer", str(raised.exception))  # a mensagem explica a ordem
+        # sem arquivo em PEP 440 a forma não importa
+        self.assertEqual(channels(["a", "alpha", "dev"]).prerelease_channels, ["a", "alpha", "dev"])
+        with self.assertRaises(ConfigError) as raised:
+            Config({"versioning": {"prerelease": "rc"}})
+        self.assertIn("`versioning.prerelease`", str(raised.exception))
 
     def test_release_commit_is_recognised_with_and_without_squash_suffix(self):
         pattern = Config().release_subject_pattern()

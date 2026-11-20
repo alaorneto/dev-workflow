@@ -597,7 +597,7 @@ def build_plan(
                 "Corrija o piso ou classifique a mudança de modo que a versão o alcance."
             )
     if prerelease:
-        target = next_prerelease(target, prerelease, repo.version_tags().values())
+        target = next_prerelease(target, prerelease, repo.version_tags().values(), cfg.prerelease_channels)
     plan.version = target
     if f"{cfg.tag_prefix}{target}" in repo.version_tags():
         plan.problems.append(

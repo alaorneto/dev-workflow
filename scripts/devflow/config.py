@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import i18n
-from .semver import LEVELS, ZERO_MAJOR_POLICIES, Version
+from .semver import CHANNEL_NAME, LEVELS, PEP440_CHANNELS, ZERO_MAJOR_POLICIES, Version, pep440_channel
 
 CONFIG_ENV = "DEV_WORKFLOW_CONFIG"
 CONFIG_CANDIDATES = (".github/dev-workflow.toml", "dev-workflow.toml", ".dev-workflow.toml")
@@ -71,6 +71,8 @@ BASE: dict[str, Any] = {
         "zero_major": "breaking-is-minor",
         "require_analysis": False,
         "trusted_bots": ["github-actions[bot]", "claude[bot]"],
+        # Canais de pré-release aceitos, do menos ao mais maduro: é a ordem de precedência do SemVer.
+        "prerelease": {"channels": ["alpha", "beta", "rc"]},
         "files": [],
         "public_surfaces": [],
         "floors": [],
@@ -208,6 +210,7 @@ class Config:
                     _fail(f"{key}.regex", "precisa de um grupo de captura com a versão.")
             except re.error as exc:
                 _fail(f"{key}.regex", f"não é uma expressão regular válida: {exc}.")
+        self._validate_channels()
         r = d["release"]
         if r["mode"] not in RELEASE_MODES:
             _fail("release.mode", f"deve ser um de {', '.join(RELEASE_MODES)}.")
@@ -216,6 +219,38 @@ class Config:
         for item in r["mark"]:
             if item not in ("comment", "milestone"):
                 _fail("release.mark", "aceita `comment` e `milestone`.")
+
+    def _validate_channels(self) -> None:
+        """Canais de pré-release: lista fechada, em minúsculas, na ordem de precedência do SemVer.
+
+        O SemVer compara identificadores alfanuméricos em ordem ASCII, e é essa a ordem que os
+        gerenciadores de pacote aplicam: uma lista fora dela prometeria uma maturidade que os
+        números não cumprem (``snapshot`` fica acima de ``rc``).
+        """
+        v, key = self.data["versioning"], "versioning.prerelease.channels"
+        if not isinstance(v.get("prerelease"), dict):
+            _fail("versioning.prerelease", self.t("config.prerelease.table"))
+        channels = v["prerelease"].get("channels")
+        if not isinstance(channels, list) or not all(isinstance(item, str) for item in channels):
+            _fail(key, self.t("config.channels.type"))
+        for channel in channels:
+            if not CHANNEL_NAME.fullmatch(channel):
+                _fail(key, self.t("config.channels.name", channel=channel))
+        for earlier, later in zip(channels, channels[1:], strict=False):
+            if not earlier < later:
+                _fail(key, self.t("config.channels.order", earlier=earlier, later=later))
+        fields = ("search", "regex", "replace")
+        if any("_pep440}" in str(entry.get(field, "")) for entry in v["files"] for field in fields):
+            forms: dict[str, str] = {}
+            for channel in channels:
+                form = pep440_channel(channel)
+                if form is None:
+                    accepted = ", ".join(sorted(PEP440_CHANNELS))
+                    _fail(key, self.t("config.channels.pep440", channel=channel, accepted=accepted))
+                elif form in forms:
+                    _fail(key, self.t("config.channels.pep440_clash", first=forms[form], second=channel, form=form))
+                else:
+                    forms[form] = channel
 
     # --- tipos e labels --------------------------------------------------------------------
 
@@ -307,6 +342,11 @@ class Config:
     @property
     def tag_prefix(self) -> str:
         return str(self.versioning["tag_prefix"])
+
+    @property
+    def prerelease_channels(self) -> list[str]:
+        """Canais de pré-release aceitos, do menos ao mais maduro."""
+        return list(self.versioning["prerelease"]["channels"])
 
     @property
     def changelog(self) -> dict[str, Any]:
