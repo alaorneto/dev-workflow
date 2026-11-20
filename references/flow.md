@@ -97,6 +97,8 @@ Um fechamento feito com o token do workflow não dispara outro evento `issues: c
 
 **O check confia na base, não no PR.** Alternativa: rodar o validador do próprio PR, como qualquer CI de testes. Descartada porque o check é a barreira do processo, não um teste do código: se o PR pode trocar o validador, ele se aprova. O custo é que uma melhoria do validador só vale depois do merge dela. O mesmo vale para a prévia e para a análise por agente, que leem o diff do PR sem executar nada dele.
 
+**Os arquivos de versão do PR são conferidos contra a versão de que ele partiu.** O check compara os arquivos da ponta do PR com a maior tag alcançável dessa ponta, não com a versão corrente da base. Depois de uma release, um PR aberto antes dela ainda traz a versão anterior nos arquivos sem ter tocado neles; comparado com a base, todo PR mais antigo seria reprovado a cada versão publicada. Quem edita a versão à mão continua reprovado, inclusive se escrever a versão corrente da base, e o PR de release continua conferido pela versão que ele publica. Para ler as tags, o workflow baixa o histórico do PR (`fetch-depth: 0`); com um checkout raso, ou uma pasta sem git, vale a versão da base.
+
 **Leitura incompleta não autoriza ação.** O GitHub devolve até 100 sub-issues ou bloqueios por página. Se a lista vier truncada, `sync-epic`, `sync-checklist` e `close-epic` param com erro em vez de fechar um epic ou criar vínculos com base em dados parciais.
 
 **Sinais determinísticos primeiro, agente como reforço.** A release nunca depende de um serviço externo estar disponível. Quando a análise falta, as notas dizem; quando o projeto exige (`require_analysis`), a release espera.

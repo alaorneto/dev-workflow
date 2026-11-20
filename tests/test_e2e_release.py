@@ -664,6 +664,35 @@ class SurroundingsTest(SandboxCase):
         )
         self.assertEqual(box.run("release.py", "check", "--tree", str(box.base / "missing")).returncode, 1)
 
+    def test_check_compares_an_older_pr_with_the_version_it_started_from(self):
+        box = self.box
+        box.git("switch", "-q", "-c", "work/20")  # o PR sai de v1.2.0 e não toca na versão
+        box.write({"notes/older.txt": "x"})
+        box.git("add", "-A")
+        box.git("commit", "-q", "-m", "feat: older work")
+        box.git("push", "-q", "origin", "work/20")
+        box.git("switch", "-q", "main")
+        box.merge_pr(10, "fix: handle the empty list", FIX, labels=["release"])
+        self.assertRan(box.release())  # a base passa a v1.2.1
+        tree = box.base / "pr-head"
+        box.git("clone", "-q", "--branch", "work/20", str(box.remote), str(tree))
+
+        out = self.assertRan(box.run("release.py", "check", "--tree", str(tree)))
+        self.assertIn("coerentes com a versão 1.2.0 (tag v1.2.0, a maior alcançável da ponta do PR)", out)
+
+        # editar a versão à mão continua reprovado, mesmo que seja para a versão corrente da base
+        (tree / "package.json").write_bytes(BASE_FILES["package.json"].replace("1.2.0", "1.2.1").encode("utf-8"))
+        refused = box.run("release.py", "check", "--tree", str(tree))
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("package.json", refused.stdout)
+
+        # atualizado com a base, o PR passa a ser conferido pela versão nova
+        Git(tree)("checkout", "-q", "--", "package.json")
+        Git(tree)("-c", "user.name=a", "-c", "user.email=a@example.com", "merge", "-q", "--no-edit", "origin/main")
+        self.assertIn(
+            "coerentes com a versão 1.2.1", self.assertRan(box.run("release.py", "check", "--tree", str(tree)))
+        )
+
     def test_the_preview_before_the_base_tag_explains_and_succeeds(self):
         box = Sandbox(tag=None)
         self.addCleanup(box.close)

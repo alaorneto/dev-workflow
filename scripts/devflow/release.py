@@ -156,6 +156,20 @@ def check_version_files(cfg: Config, current: Version, *, root: Path | None = No
     return [f"{name}: o conteúdo não corresponde à versão {current}." for name in drifted]
 
 
+def tree_latest(cfg: Config, tree: Path) -> tuple[str, Version] | None:
+    """A maior tag de versão alcançável da ponta de ``tree``, quando ela é um checkout com histórico.
+
+    O PR é conferido contra a versão de que partiu, não contra a da base: depois de uma release,
+    um PR mais antigo ainda traz a versão anterior nos arquivos sem ter tocado neles. Só o git da
+    árvore é consultado; nada dela é executado. Sem histórico (checkout raso, pasta comum) não há
+    resposta, e quem chama usa a versão da base.
+    """
+    tree_git = Git(tree)
+    if not tree_git.ok("rev-parse", "--verify", "--quiet", "HEAD^{commit}"):
+        return None
+    return Repo(cfg, tree_git).latest("HEAD", final_only=False)
+
+
 # --- changelog ---------------------------------------------------------------------------------
 
 
@@ -758,6 +772,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if tree is not None and not tree.is_dir():
                 print(f"ERRO: --tree {args.tree} não é um diretório.")
                 return 1
+            where = ""
+            own = tree_latest(cfg, tree) if tree is not None else None
+            if own:  # a versão de que o PR partiu; a base pode já ter publicado outra
+                latest, current, where = own, own[1], ", a maior alcançável da ponta do PR"
             prepared = prepared_release(session, tree, current) if tree is not None else None
             problems = check_version_files(cfg, prepared[1] if prepared else current, root=tree)
             for problem in problems:
@@ -768,7 +786,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"com a versão {prepared[1]}, que ele publica."
                 )
             elif not problems:
-                origin = f"tag {latest[0]}" if latest else "versioning.initial_version (ainda não há tag)"
+                origin = f"tag {latest[0]}{where}" if latest else "versioning.initial_version (ainda não há tag)"
                 print(
                     f"{len(cfg.versioning['files'])} entrada(s) de arquivo coerentes com a versão {current} ({origin})."
                 )

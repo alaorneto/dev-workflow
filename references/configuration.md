@@ -86,7 +86,7 @@ Um bloco por substituição; o mesmo arquivo pode ter vários.
 
 Marcadores: `{current}` e `{new}` (SemVer completo) e, para cada um, `_pep440` (`1.2.0rc1`), `_core` (`1.2.0`), `_major`, `_minor`, `_patch`, `_next_minor` (`1.3.0`), `_next_major` (`2.0.0`); mais `{date}`.
 
-`release.py check` reprova quando reescrever para a versão corrente mudaria algum arquivo: é a detecção de edição manual.
+`release.py check` reprova quando reescrever para a versão corrente mudaria algum arquivo: é a detecção de edição manual. No check do PR (`--tree`), a versão corrente é a de que o PR partiu (a maior tag alcançável da ponta dele), para que um PR aberto antes da última release não seja reprovado por estar atrás da base.
 
 Exemplos:
 

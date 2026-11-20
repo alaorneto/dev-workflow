@@ -38,6 +38,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           path: .pr-head
+          fetch-depth: 0 # tags: o PR é conferido contra a versão de que partiu, a maior tag alcançável da ponta dele
           persist-credentials: false
       - name: Issue, seções, sobreposição de versão e título
         # Dados do evento entram por variável de ambiente, nunca interpolados no script.
