@@ -383,7 +383,9 @@ def find_prepared(session: Session, base_tag: str | None, head: str = "HEAD") ->
             continue
         for candidate in repo.log(f"{base_tag}..{head}" if base_tag else head, first_parent=True):
             if candidate.sha == commit.sha or session.git.ok("merge-base", "--is-ancestor", commit.sha, candidate.sha):
-                return tag, version, candidate.sha
+                # A tag vai no commit de release, não no merge que o trouxe: o que entrou na branch
+                # depois de ele ser preparado fica depois da tag e sai na versão seguinte.
+                return tag, version, commit.sha
     return None
 
 
@@ -521,6 +523,14 @@ def run(session: Session, args: argparse.Namespace) -> int:
     branch = session.branch()
     if not cfg.is_release_branch(branch):
         print(f"A branch `{branch}` não publica versões (veja `repository.release_branches`).")
+        return 0
+    if branch == cfg.release["pr_branch"]:
+        # O nome casa com `release/*`, e um push feito com RELEASE_TOKEN dispara o workflow nela.
+        print(
+            f"A branch `{branch}` é a do PR de release (`release.pr_branch`): a versão sai quando esse PR é "
+            "mesclado, não daqui."
+        )
+        _output(released="false")
         return 0
     override = Override(args.level, args.reason or "(motivo não informado)", "execução manual") if args.level else None
     analyses = []

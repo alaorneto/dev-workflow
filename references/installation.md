@@ -48,6 +48,8 @@ Cada pessoa instala o hook no próprio checkout, uma vez: `python3 S/bootstrap.p
 3. **Proteção de branch (recomendado).** Marque "Verificação do PR" como check obrigatório da branch padrão. Atenção ao modo de release:
    - `direct` precisa que o workflow consiga fazer push na branch. Com proteção que exige PR, ou troque para `pull-request`, ou crie o segredo `RELEASE_TOKEN` com um token (fine-grained PAT ou GitHub App) de quem pode ignorar a proteção.
    - `pull-request`: o PR de release é aberto pelo token do Actions, que não dispara os checks. Com checks obrigatórios, use `RELEASE_TOKEN` (aí os checks rodam) ou feche e reabra o PR.
+     O PR de release é refeito a cada push na branch de destino, mas pode ser mesclado antes de o workflow terminar de refazê-lo. Mesclado por **merge commit**, nada se perde: a tag fica no commit de release, e o PR que entrou nesse intervalo sai na versão seguinte. Mesclado por **squash ou rebase**, o git não distingue o que entrou depois, e esse PR fica na versão sem linha no changelog; nesse caso marque "Require branches to be up to date before merging" na proteção da branch.
+     A branch do PR de release (`release.pr_branch`, por padrão `release/next`) nunca publica, mesmo casando com `release/*`: um push nela feito com `RELEASE_TOKEN` dispara o workflow, que termina sem fazer nada. Uma branch de manutenção não pode ter esse nome.
 4. **Segredos opcionais.**
    - `RELEASE_TOKEN`: escrever em branch protegida e fazer a tag disparar outros workflows.
    - `ANTHROPIC_API_KEY` ou `CLAUDE_CODE_OAUTH_TOKEN`: liga a análise de versão por agente no CI. Sem eles o workflow pula os passos.

@@ -44,7 +44,7 @@ Depois do merge, "Versão e release":
 8. **Marca**: comentário "publicado na versão vX.Y.Z" em cada PR incluído (inclusive os antigos, sem `release`) e em cada issue entregue; milestone `vX.Y.Z` com todos eles, fechada.
 9. Dispara o workflow de publicação de artefatos, se configurado.
 
-No modo `pull-request` (branch protegida), os passos 6 a 8 viram: abre ou atualiza o PR `release/next` com o commit de release; a publicação acontece quando esse PR é mesclado.
+No modo `pull-request` (branch protegida), os passos 6 a 8 viram: abre ou atualiza o PR `release/next` com o commit de release; a publicação acontece quando esse PR é mesclado, nunca a partir da própria `release/next`. A tag fica no commit de release (num merge por merge commit, o segundo pai do merge), e o merge do PR de release não conta como mudança de nenhuma versão.
 
 ## Epics: sub-issues, dependências e fechamento
 
@@ -115,4 +115,5 @@ Um fechamento feito com o token do workflow não dispara outro evento `issues: c
 - Só GitHub (`gh`). O cálculo funciona sem ele (`DEV_WORKFLOW_OFFLINE=1`), com os sinais dos commits.
 - Um repositório, uma versão. Monorepo com versões independentes por pacote não é coberto.
 - O token padrão do Actions não redispara workflows: o PR de release (modo `pull-request`) não roda checks sozinho, e a tag criada não dispara workflows `on: push: tags`. Use `release.dispatch_workflow` ou o segredo `RELEASE_TOKEN`.
+- No modo `pull-request`, um PR que entra na branch depois de o PR de release ser preparado e antes de ele ser mesclado só é reconhecido como pendente quando o PR de release entra por merge commit. Com squash ou rebase ele fica atrás da tag sem linha no changelog: exija branch atualizada (veja a instalação). Todas as linhas de manutenção dividem a mesma branch de PR de release.
 - A análise de import dinâmico, reflexão e contratos implícitos continua sendo julgamento: o agente pode errar, e por isso a sobreposição existe.
