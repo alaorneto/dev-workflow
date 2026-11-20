@@ -53,7 +53,7 @@ Cada pessoa instala o hook no próprio checkout, uma vez: `python3 S/bootstrap.p
 4. **Segredos opcionais.**
    - `RELEASE_TOKEN`: escrever em branch protegida e fazer a tag disparar outros workflows.
    - `ANTHROPIC_API_KEY` ou `CLAUDE_CODE_OAUTH_TOKEN`: liga a análise de versão por agente no CI. Sem eles o workflow pula os passos.
-5. **Publicação de artefatos (opcional).** Aponte `release.dispatch_workflow` para um workflow com `workflow_dispatch` e os inputs `version` e `tag`.
+5. **Publicação de artefatos (opcional).** Aponte `release.dispatch_workflow` para um workflow com `workflow_dispatch` e os inputs `version` e `tag`. Ele dispara também nas pré-releases; para tratá-las de outro jeito (dist-tag do npm, por exemplo), veja [configuração](configuration.md#publicar-artefatos-final-ou-pré-release).
 
 ## 5. Hooks do Claude Code (opcional)
 

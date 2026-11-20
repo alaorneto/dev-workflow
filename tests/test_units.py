@@ -20,6 +20,7 @@ from devflow.release import (
     fit_notes,
     release_notes,
     rewrite,
+    tokens,
     truncate_lines,
     update_changelog,
 )
@@ -355,6 +356,19 @@ class VersionFilesTest(unittest.TestCase):
         self.assertEqual(rewrite(text, entry, V("0.5.1"), V("0.6.0")), '{"core": ">=0.6.0,<0.7.0"}')
         pep = {"path": "p", "search": 'version = "{current_pep440}"'}
         self.assertEqual(rewrite('version = "1.3.0rc1"', pep, V("1.3.0-rc.1"), V("1.3.0")), 'version = "1.3.0"')
+
+    def test_the_prerelease_suffix_and_the_channel_have_their_own_markers(self):
+        suffix = {"path": "p", "search": "<VersionSuffix>{current_prerelease}</VersionSuffix>"}
+        final = "<VersionSuffix></VersionSuffix>"
+        beta = rewrite(final, suffix, V("1.2.0"), V("1.3.0-beta.1"))
+        self.assertEqual(beta, "<VersionSuffix>beta.1</VersionSuffix>")
+        self.assertEqual(rewrite(beta, suffix, V("1.3.0-beta.1"), V("1.3.0")), final)
+        channel = {"path": "p", "regex": r'"tag": "[a-z]*"', "replace": '"tag": "{new_channel}"'}
+        self.assertEqual(rewrite('{"tag": ""}', channel, V("1.2.0"), V("1.3.0-rc.2")), '{"tag": "rc"}')
+        self.assertEqual(rewrite('{"tag": "rc"}', channel, V("1.3.0-rc.2"), V("1.3.0")), '{"tag": ""}')
+        values = tokens(V("1.3.0-beta.1"), V("1.3.0"))
+        self.assertEqual((values["current_prerelease"], values["current_channel"]), ("beta.1", "beta"))
+        self.assertEqual((values["new_prerelease"], values["new_channel"]), ("", ""))
 
     def test_replacement_text_is_literal(self):
         entry = {"path": "p", "regex": r"VERSION=\S+", "replace": r"VERSION={new}\1"}

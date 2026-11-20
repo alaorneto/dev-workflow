@@ -51,6 +51,8 @@ jobs:
       released: ${{ steps.run.outputs.released }}
       version: ${{ steps.run.outputs.version }}
       tag: ${{ steps.run.outputs.tag }}
+      prerelease: ${{ steps.run.outputs.prerelease }} # "true" numa pré-release, "false" numa versão final
+      channel: ${{ steps.run.outputs.channel }} # alpha, beta, rc; vazio numa versão final
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

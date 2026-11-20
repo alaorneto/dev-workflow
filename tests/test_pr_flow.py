@@ -360,6 +360,9 @@ class BootstrapTest(unittest.TestCase):
         self.assertIn('--head-ref refs/dev-workflow/pr-head --check', check)
         # A base pode ainda não ter a opção: o passo não reprova o PR que a traz.
         self.assertIn('preview --help | grep -q -- "--check"', check)
+        release = box.read(".github/workflows/release.yml")
+        self.assertIn("prerelease: ${{ steps.run.outputs.prerelease }}", release)
+        self.assertIn("channel: ${{ steps.run.outputs.channel }}", release)
         analysis = box.read(".github/workflows/semver-analysis.yml")
         self.assertIn("labels.*.name, 'release') ||", analysis)
         self.assertIn("join(github.event.pull_request.labels.*.name, ',')), ',release:')", analysis)

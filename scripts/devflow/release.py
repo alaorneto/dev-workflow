@@ -69,6 +69,11 @@ class ReleaseError(RuntimeError):
 # --- arquivos de versão ------------------------------------------------------------------------
 
 
+def channel_of(version: Version) -> str:
+    """O canal de uma pré-release (``beta`` em ``1.3.0-beta.1``); vazio numa versão final."""
+    return version.pre[0] if version.is_prerelease else ""
+
+
 def tokens(current: Version, new: Version) -> dict[str, str]:
     values: dict[str, str] = {"date": datetime.datetime.now(datetime.UTC).date().isoformat()}
     for name, version in (("current", current), ("new", new)):
@@ -80,6 +85,9 @@ def tokens(current: Version, new: Version) -> dict[str, str]:
         values[f"{name}_patch"] = str(version.patch)
         values[f"{name}_next_minor"] = f"{version.major}.{version.minor + 1}.0"
         values[f"{name}_next_major"] = f"{version.major + 1}.0.0"
+        # Vazios numa versão final: para arquivos que guardam o sufixo de pré-release à parte.
+        values[f"{name}_prerelease"] = ".".join(version.pre)
+        values[f"{name}_channel"] = channel_of(version)
     return values
 
 
@@ -373,6 +381,16 @@ def _output(**values: str) -> None:
             file.writelines(f"{key}={value}\n" for key, value in values.items())
 
 
+def version_outputs(version: Version, tag: str) -> dict[str, str]:
+    """O que os jobs seguintes recebem sobre a versão: número, tag, se é pré-release e de qual canal."""
+    return {
+        "version": str(version),
+        "tag": tag,
+        "prerelease": "true" if version.is_prerelease else "false",
+        "channel": channel_of(version),
+    }
+
+
 # --- preparar e publicar -----------------------------------------------------------------------
 
 
@@ -560,7 +578,7 @@ def publish(session: Session, tag: str, version: Version, target: str, plan: Pla
                 print(f"Workflow {workflow} disparado para {tag}.")
             except CommandError as exc:
                 print(f"aviso: não consegui disparar {workflow}: {exc}")
-    _output(released="true", version=str(version), tag=tag)
+    _output(released="true", **version_outputs(version, tag))
 
 
 def open_release_pr(session: Session, plan: Plan) -> None:
@@ -583,7 +601,8 @@ def open_release_pr(session: Session, plan: Plan) -> None:
         created = github.create_pull({"title": title, "head": branch, "base": plan.branch, "body": body})
         print(f"PR de release #{(created or {}).get('number', '?')} aberto para {tag}.")
     git("reset", "--hard", "HEAD~1")
-    _output(released="false", version=str(plan.version), tag=tag)
+    assert plan.version is not None
+    _output(released="false", **version_outputs(plan.version, tag))
 
 
 def reconcile_latest(session: Session) -> None:

@@ -9,7 +9,7 @@ import re
 import unittest
 
 import support  # noqa: F401  (põe scripts/ no sys.path antes de importar devflow)
-from support import BASE_CONFIG, BASE_FILES, PR_BODY, SandboxCase
+from support import BASE_CONFIG, BASE_FILES, PR_BODY, Sandbox, SandboxCase
 
 FIX = [("fix: handle the empty list", None)]
 FEAT = [("feat: add the export command", None)]
@@ -323,6 +323,57 @@ class ChannelPreviewTest(SandboxCase):
         out = self._preview(42, later)
         self.assertIn("este PR não pede versão, mas entra em **v1.3.0-beta.1** (minor)", out)
         self.assertIn("Há pedido de versão ainda não atendido (#32 (`release:beta`))", out)
+
+
+class WorkflowOutputsTest(SandboxCase):
+    config = BASE_CONFIG + '\n[release]\ndispatch_workflow = "publish.yml"\n'
+
+    def _outputs(self, box):
+        """O que uma execução grava em ``GITHUB_OUTPUT``, para os jobs seguintes do workflow."""
+        path = box.base / "github-output.txt"
+        path.write_text("", encoding="utf-8")
+        self.assertRan(box.release(env={"GITHUB_OUTPUT": str(path)}))
+        return dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines())
+
+    def test_the_outputs_say_whether_the_version_is_a_prerelease_and_of_which_channel(self):
+        box = self.box
+        box.merge_pr(31, "feat: add the export command", FEAT, labels=["release:beta"])
+        self.assertEqual(
+            self._outputs(box),
+            {
+                "released": "true",
+                "version": "1.3.0-beta.1",
+                "tag": "v1.3.0-beta.1",
+                "prerelease": "true",
+                "channel": "beta",
+            },
+        )
+        box.merge_pr(32, "fix: handle the empty list", FIX, labels=["release"])
+        self.assertEqual(
+            self._outputs(box),
+            {"released": "true", "version": "1.3.0", "tag": "v1.3.0", "prerelease": "false", "channel": ""},
+        )
+        self.assertEqual(self._outputs(box), {"released": "false"})
+        # o workflow de publicação continua recebendo só `version` e `tag`: ele deriva o resto da versão
+        self.assertEqual(
+            [dispatch["inputs"] for dispatch in box.state()["dispatches"]],
+            [{"version": "1.3.0-beta.1", "tag": "v1.3.0-beta.1"}, {"version": "1.3.0", "tag": "v1.3.0"}],
+        )
+
+    def test_a_prepared_release_pr_announces_the_version_it_will_publish(self):
+        box = Sandbox(BASE_CONFIG, tag="v1.2.0", mode="pull-request")
+        self.addCleanup(box.close)
+        box.merge_pr(31, "feat: add the export command", FEAT, labels=["release:rc"])
+        self.assertEqual(
+            self._outputs(box),
+            {
+                "released": "false",
+                "version": "1.3.0-rc.1",
+                "tag": "v1.3.0-rc.1",
+                "prerelease": "true",
+                "channel": "rc",
+            },
+        )
 
 
 WHY = "### Por que este número"

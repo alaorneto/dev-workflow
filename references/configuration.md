@@ -113,7 +113,7 @@ Um bloco por substituição; o mesmo arquivo pode ter vários.
 | `replace` | Texto que entra no lugar. Opcional com `search` (o padrão troca `{current…}` por `{new…}`); obrigatório com `regex`. É literal: sem referências a grupos |
 | `count` | Ocorrências esperadas (padrão 1). Número diferente é erro, de propósito: um padrão que casa demais reescreve o que não devia |
 
-Marcadores: `{current}` e `{new}` (SemVer completo) e, para cada um, `_pep440` (`1.2.0rc1`), `_core` (`1.2.0`), `_major`, `_minor`, `_patch`, `_next_minor` (`1.3.0`), `_next_major` (`2.0.0`); mais `{date}`.
+Marcadores: `{current}` e `{new}` (SemVer completo) e, para cada um, `_pep440` (`1.2.0rc1`), `_core` (`1.2.0`), `_major`, `_minor`, `_patch`, `_next_minor` (`1.3.0`), `_next_major` (`2.0.0`), `_prerelease` (o sufixo de pré-release, `rc.1`) e `_channel` (o canal, `rc`); mais `{date}`. `_prerelease` e `_channel` ficam vazios numa versão final: servem a arquivos que guardam o sufixo separado do número.
 
 `release.py check` reprova quando reescrever para a versão corrente mudaria algum arquivo: é a detecção de edição manual. No check do PR (`--tree`), a versão corrente é a de que o PR partiu (a maior tag alcançável da ponta dele), para que um PR aberto antes da última release não seja reprovado por estar atrás da base.
 
@@ -135,6 +135,10 @@ search = 'version = "{current}"'
 [[versioning.files]]            # .NET
 path = "Directory.Build.props"
 search = "<Version>{current}</Version>"
+
+[[versioning.files]]            # .NET com o sufixo à parte: <VersionSuffix>beta.1</VersionSuffix>, vazio na final
+path = "Directory.Build.props"
+search = "<VersionSuffix>{current_prerelease}</VersionSuffix>"
 
 [[versioning.files]]            # Go: constante no código; a versão do módulo é a própria tag
 path = "internal/version/version.go"
@@ -194,7 +198,42 @@ A lista é conferida ao carregar a configuração:
 | `commit_message` | `"chore(release): {tag}"` | Assunto do commit de release. É por ele que a automação reconhece uma release preparada; não mude com release em andamento |
 | `pr_branch` | `"release/next"` | Branch do PR de release (modo `pull-request`) |
 | `mark` | `["comment", "milestone"]` | Como marcar PRs e issues incluídos |
-| `dispatch_workflow` | `""` | Arquivo de workflow a disparar depois da release, com os inputs `version` e `tag` |
+| `dispatch_workflow` | `""` | Arquivo de workflow a disparar depois da release, com os inputs `version` e `tag`. Dispara também nas pré-releases |
+
+### Publicar artefatos: final ou pré-release
+
+O job `release` do workflow "Versão e release" expõe saídas para os jobs seguintes do mesmo workflow:
+
+| Saída | Valor |
+|---|---|
+| `released` | `true` quando esta execução publicou uma versão |
+| `version`, `tag` | `1.3.0-beta.1` e `v1.3.0-beta.1` (no modo `pull-request`, a versão do PR de release aberto, com `released=false`) |
+| `prerelease` | `true` numa pré-release, `false` numa versão final |
+| `channel` | `alpha`, `beta`, `rc`; vazio numa versão final |
+
+O workflow de `dispatch_workflow` recebe só `version` e `tag` (o `workflow_dispatch` recusa entrada não declarada) e deriva o resto da versão. Para o npm, por exemplo, a pré-release vai para a dist-tag do canal, e só a versão final vira `latest`:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      version: { required: true, type: string }
+      tag: { required: true, type: string }
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with: { ref: "${{ inputs.tag }}" }
+      - env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          case "$VERSION" in
+            *-*) dist="${VERSION#*-}"; dist="${dist%%.*}" ;;   # 1.3.0-beta.1 → beta
+            *)   dist="latest" ;;
+          esac
+          npm publish --tag "$dist"
+```
 
 ## Variáveis de ambiente
 
