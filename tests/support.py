@@ -232,16 +232,23 @@ class Sandbox:
         author="alice",
         squash=False,
         base="main",
+        branch=None,
+        fork=None,
     ):
-        """Cria a branch, commita, mescla em ``base`` como o GitHub faria e registra o PR."""
-        branch = f"work/{number}"
+        """Cria a branch, commita, mescla em ``base`` como o GitHub faria e registra o PR.
+
+        ``fork`` é o repositório de origem (``dono/nome``) quando o PR não sai deste.
+        """
+        branch = branch or f"work/{number}"
+        source = fork or REPOSITORY
         commit_list = self._commit_all(branch, commits, base)
         self.git("switch", "-q", base)
         if squash:
             self.git("merge", "-q", "--squash", branch)
             self.git("commit", "-q", "-m", f"{title} (#{number})")
         else:
-            self.git("merge", "-q", "--no-ff", branch, "-m", f"Merge pull request #{number} from acme/{branch}")
+            owner = source.split("/")[0]
+            self.git("merge", "-q", "--no-ff", branch, "-m", f"Merge pull request #{number} from {owner}/{branch}")
         self.git("branch", "-q", "-D", branch)
         self.git("push", "-q", "origin", base)
         if body is None:
@@ -258,8 +265,8 @@ class Sandbox:
             "merge_commit_sha": self.git("rev-parse", "HEAD"),
             "labels": [{"name": name} for name in labels],
             "user": {"login": author},
-            "head": {"ref": branch},
-            "base": {"ref": base},
+            "head": {"ref": branch, "repo": {"full_name": source}},
+            "base": {"ref": base, "repo": {"full_name": REPOSITORY}},
             "commit_list": commit_list,
             "milestone": None,
         }
@@ -281,8 +288,8 @@ class Sandbox:
             "merged_at": None,
             "labels": [{"name": name} for name in labels],
             "user": {"login": "alice"},
-            "head": {"ref": branch},
-            "base": {"ref": "main"},
+            "head": {"ref": branch, "repo": {"full_name": REPOSITORY}},
+            "base": {"ref": "main", "repo": {"full_name": REPOSITORY}},
             "commit_list": commit_list,
             "milestone": None,
         }

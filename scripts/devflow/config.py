@@ -327,6 +327,17 @@ class Config:
     def is_release_branch(self, branch: str) -> bool:
         return any(fnmatch.fnmatchcase(branch, pattern) for pattern in self.data["repository"]["release_branches"])
 
+    def is_release_pull(self, pull: dict[str, Any] | None) -> bool:
+        """O PR é o de release da automação: sai de ``release.pr_branch`` deste repositório.
+
+        O nome da branch não basta: um fork pode ter uma branch igual. Num fork apagado a API
+        devolve ``head.repo: null``, e o PR também não conta.
+        """
+        head, base = (pull or {}).get("head") or {}, (pull or {}).get("base") or {}
+        source = str((head.get("repo") or {}).get("full_name") or "").lower()
+        target = str((base.get("repo") or {}).get("full_name") or "").lower()
+        return str(head.get("ref", "")) == self.release["pr_branch"] and bool(source) and source == target
+
     @property
     def issues(self) -> dict[str, Any]:
         return self.data["issues"]

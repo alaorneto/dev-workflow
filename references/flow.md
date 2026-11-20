@@ -19,7 +19,7 @@ plano aceito ─► issues (+ epic) ─► branch <tipo>/<N>-<slug> ─► commi
 ## O que acontece num PR sem versão
 
 1. O PR é aberto com `Closes #N` e sem o label `release`.
-2. **"Verificação do PR"** roda a cada push, edição e troca de label: issue existe e tem um tipo; seções do modelo preenchidas; sobreposição de versão (`semver:*`) só com `release` e com motivo; título em Conventional Commits; arquivos de versão coerentes. Avisa (sem reprovar) sobre critérios de aceite não marcados, seções faltando na issue e tipo do título diferente do tipo da issue.
+2. **"Verificação do PR"** roda a cada push, edição e troca de label: issue existe e tem um tipo; seções do modelo preenchidas; sobreposição de versão (`semver:*`) só com `release` e com motivo; título em Conventional Commits; nenhum título ou commit com o formato do commit de release; arquivos de versão coerentes. Avisa (sem reprovar) sobre critérios de aceite não marcados, seções faltando na issue e tipo do título diferente do tipo da issue.
    O check roda o skill e a configuração **da branch base**, nunca os do PR: um PR que alterasse o validador poderia se aprovar. Do PR só se leem dados (corpo, labels, commits e, numa pasta à parte, os arquivos de versão). Um PR que melhora o validador é conferido pela versão anterior; a nova vale a partir do merge. Enquanto a base não tem o skill, o check passa avisando.
 3. O mesmo workflow comenta a **prévia**: "este PR não publica versão; fica acumulado com K mudanças; se a versão saísse depois deste merge, seria vX (nível)". É um comentário único, atualizado no lugar. Como escreve no PR, esse job só roda em PR do próprio repositório (fork recebe token de leitura) e também usa só o código da base.
 4. Merge.
@@ -92,6 +92,8 @@ Um fechamento feito com o token do workflow não dispara outro evento `issues: c
 **Dois modos de escrita na branch.** `direct` (padrão) commita na branch e publica na mesma execução: zero passos manuais, mas exige que o token possa escrever nela. `pull-request` abre um PR de release e publica no merge dele: convive com branch que exige PR, ao custo de um clique. O estado é o mesmo nos dois; só muda quem leva o commit à branch.
 
 **Idempotência por estado, não por memória.** Cada execução deriva tudo de tags, do commit de release e do GitHub: tag sem release → cria a release; commit de release sem tag → cria a tag naquele commit; nada pendente → não faz nada. Cada marcação confere antes se já existe. Não há arquivo de estado nem "último PR processado".
+
+**O commit de release vale pela origem, não pelo assunto.** Qualquer PR pode conter um commit chamado `chore(release): vX`, com o número que o autor quiser. Por isso a release só publica o commit que chegou por um de dois caminhos: push direto na branch (o commit está no primeiro pai e nenhum PR o trouxe; é o modo `direct` e a retomada depois de uma falha) ou o PR de release, que sai da branch `release.pr_branch` **deste repositório**. Um commit com esse assunto vindo de outro PR, inclusive de um fork que tenha uma branch com o mesmo nome, é ignorado com aviso e não gera tag; o check do PR reprova o título ou o commit antes do merge, e só o PR de release do próprio repositório é isento das verificações. Sem acesso à API (`DEV_WORKFLOW_OFFLINE=1`), a origem é lida do assunto do merge commit (`Merge pull request #N from <dono>/<branch>`).
 
 **O maior nível vence; a análise só eleva.** Um modelo de linguagem reduzindo um nível que um humano declarou (o label de tipo) é o erro caro. Reduzir é sobreposição do dono, com motivo registrado.
 
