@@ -4,7 +4,7 @@ import unittest
 
 import support  # noqa: F401  (põe scripts/ no sys.path antes de importar devflow)
 from devflow.config import Config, ConfigError
-from devflow.plan import validate_analysis
+from devflow.plan import _glob_match, surface_hits, validate_analysis
 from devflow.release import ReleaseError, fit_notes, rewrite, truncate_lines, update_changelog
 from devflow.semver import Version, effective_level, max_level, next_prerelease, next_version
 from devflow.text import (
@@ -272,6 +272,53 @@ class AnalysisFormatTest(unittest.TestCase):
         ):
             with self.subTest(bad), self.assertRaises(ValueError):
                 validate_analysis(bad)
+
+
+class GlobTest(unittest.TestCase):
+    """``*`` e ``?`` ficam num nível de diretório; só ``**`` cruza."""
+
+    CASES = (
+        ("scripts/*.py", "scripts/release.py", True),
+        ("scripts/*.py", "scripts/devflow/semver.py", False),
+        ("*.md", "README.md", True),
+        ("*.md", "docs/a.md", False),
+        ("**/*.md", "README.md", True),
+        ("**/*.md", "docs/a/b.md", True),
+        ("assets/**", "assets/workflows/release.yml", True),
+        ("assets/**", "assets/x", True),
+        ("assets/**", "assetsx/y", False),
+        ("assets/**", "other/assets/x", False),
+        ("src/**/api.py", "src/api.py", True),
+        ("src/**/api.py", "src/a/b/api.py", True),
+        ("src/**/api.py", "src/a/b/xapi.py", False),
+        ("src/**/*.py", "src/x.py", True),
+        ("src/**/*.py", "src/a/b/x.py", True),
+        ("src/**/*.py", "lib/x.py", False),
+        ("docs/**.md", "docs/a/b.md", True),
+        ("api/v?/client.py", "api/v1/client.py", True),
+        ("api/v?/client.py", "api/v//client.py", False),
+        ("api/v[12]/*.py", "api/v2/a.py", True),
+        ("api/v[12]/*.py", "api/v3/a.py", False),
+        ("api/v[!12]/*.py", "api/v3/a.py", True),
+        ("api/v[!12]/*.py", "api/v1/a.py", False),
+        ("a.b/c+d.py", "a.b/c+d.py", True),
+        ("a.b/c+d.py", "axb/c+d.py", False),
+        ("VERSION", "VERSION", True),
+        ("VERSION", "sub/VERSION", False),
+        ("src/[x", "src/[x", True),
+    )
+
+    def test_a_single_star_stays_in_one_directory_and_a_double_star_crosses(self):
+        for pattern, path, expected in self.CASES:
+            with self.subTest(pattern=pattern, path=path):
+                self.assertIs(_glob_match(path, [pattern]), expected)
+        self.assertTrue(_glob_match("docs/a.md", ["*.txt", "**/*.md"]))
+        self.assertFalse(_glob_match("docs/a.md", []))
+
+    def test_public_surfaces_follow_the_same_rule(self):
+        cfg = Config({"versioning": {"public_surfaces": [{"name": "Scripts", "globs": ["scripts/*.py"]}]}})
+        events = [("modify", "scripts/release.py"), ("modify", "scripts/devflow/semver.py")]
+        self.assertEqual([hit.path for hit in surface_hits(events, cfg)], ["scripts/release.py"])
 
 
 if __name__ == "__main__":
