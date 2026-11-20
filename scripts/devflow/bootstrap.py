@@ -464,7 +464,7 @@ def doctor(_args: argparse.Namespace) -> int:
 
     repo = Repo(cfg, git)
     if cfg.versioning_enabled:
-        latest = repo.latest("HEAD", final_only=False) if git.ok("rev-parse", "HEAD") else None
+        latest = repo.current("HEAD") if git.ok("rev-parse", "HEAD") else None
         current = latest[1] if latest else Version.parse(str(cfg.versioning["initial_version"]))
         problems = check_version_files(cfg, current)
         for problem in problems:

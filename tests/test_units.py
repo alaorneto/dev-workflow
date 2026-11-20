@@ -14,7 +14,16 @@ from devflow import i18n
 from devflow.config import Config, ConfigError, load
 from devflow.plan import _glob_match, surface_hits, validate_analysis
 from devflow.release import ReleaseError, fit_notes, rewrite, truncate_lines, update_changelog
-from devflow.semver import Version, effective_level, max_level, next_prerelease, next_version
+from devflow.semver import (
+    Version,
+    cycle_floor,
+    effective_level,
+    level_between,
+    max_level,
+    next_prerelease,
+    next_version,
+    not_surpassed,
+)
 from devflow.text import (
     breaking_notes,
     checkboxes,
@@ -85,6 +94,23 @@ class SemverTest(unittest.TestCase):
         with self.assertRaises(ValueError) as raised:
             next_prerelease(V("1.3.0"), "nightly", existing, allowed)
         self.assertIn("alpha, beta, rc", str(raised.exception))
+
+    def test_the_cycle_floor_is_the_highest_target_already_published_as_a_prerelease(self):
+        self.assertIsNone(cycle_floor([]))
+        self.assertEqual(str(cycle_floor(map(V, ["1.3.0-beta.2", "2.0.0-alpha.1", "1.3.0-rc.1"]))), "2.0.0")
+        self.assertEqual(level_between(V("0.9.0"), V("1.0.0")), "major")
+        self.assertEqual(level_between(V("1.2.0"), V("1.3.0")), "minor")
+        self.assertEqual(level_between(V("1.2.0"), V("1.2.1")), "patch")
+
+    def test_a_new_prerelease_must_come_after_every_one_of_the_same_target(self):
+        cycle = [V("1.3.0-beta.1"), V("1.3.0-beta.2"), V("1.2.1-rc.4")]
+        self.assertEqual(str(not_surpassed(V("1.3.0-alpha.1"), cycle)), "1.3.0-beta.2")
+        self.assertEqual(str(not_surpassed(V("1.3.0-beta.2"), cycle)), "1.3.0-beta.2")
+        for later in ("1.3.0-beta.3", "1.3.0-rc.1", "1.3.0"):
+            self.assertIsNone(not_surpassed(V(later), cycle), later)
+        # em outro alvo a numeração e o canal recomeçam: a precedência já é maior
+        self.assertIsNone(not_surpassed(V("2.0.0-alpha.1"), cycle))
+        self.assertIsNone(not_surpassed(V("1.3.0-alpha.1"), []))
 
     def test_pep440_form(self):
         self.assertEqual(V("1.3.0-rc.1").pep440(), "1.3.0rc1")

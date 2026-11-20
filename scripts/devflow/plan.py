@@ -1,8 +1,9 @@
 """Plano de versão: o que se acumulou desde a última tag e qual é o próximo número.
 
-A fonte da verdade é o git: a versão corrente é a maior tag de versão alcançável, e tudo que
-está entre ela e o HEAD ainda não foi publicado. Nada depende de marcação mutável no GitHub
-para saber o que já saiu; labels e comentários só informam *como* versionar.
+A fonte da verdade é o git: a versão corrente vem das tags de versão alcançáveis (``Repo.line``),
+e tudo que está entre a última final e o HEAD ainda não saiu numa versão final. Nada depende de
+marcação mutável no GitHub para saber o que já saiu; labels e comentários só informam *como*
+versionar.
 """
 
 from __future__ import annotations
@@ -15,7 +16,17 @@ from typing import Any
 
 from .config import BREAKING_SECTION, FALLBACK_SECTION, Config
 from .gh import Git, GitHub, is_trusted_author, label_names
-from .semver import LEVELS, Version, highest, level_index, max_level, next_prerelease, next_version
+from .semver import (
+    LEVELS,
+    Version,
+    cycle_floor,
+    level_between,
+    level_index,
+    max_level,
+    next_prerelease,
+    next_version,
+    not_surpassed,
+)
 from .text import (
     MERGE_PR,
     SQUASH_SUFFIX,
@@ -122,6 +133,8 @@ class Plan:
     override: Override | None
     version: Version | None
     prerelease: str | None = None
+    previous_tag: str | None = None  # a tag da versão corrente: a pré-release mais recente do ciclo ou a final
+    cycle: list[str] = field(default_factory=list)  # tags de pré-release do ciclo em andamento
     notes: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
 
@@ -131,6 +144,39 @@ class Plan:
 
     def tag(self, cfg: Config) -> str | None:
         return f"{cfg.tag_prefix}{self.version}" if self.version else None
+
+
+@dataclass
+class Line:
+    """Onde a linha de um ref está: a última final, o ciclo de pré-releases e a versão corrente.
+
+    O **ciclo** são as tags de pré-release alcançáveis do ref e não da última final. Ele é definido
+    por alcance no grafo, não por comparação de número: uma pré-release maior que ficou *atrás* de
+    uma final (um repositório que já regrediu) não volta a contar, e nada é forçado a alcançá-la.
+    A **versão corrente** é a que os arquivos de versão carregam: a pré-release mais recente do
+    ciclo ou, sem ciclo, a última final.
+    """
+
+    tags: dict[str, Version]  # todas as tags de versão alcançáveis
+    final_tag: str | None
+    cycle: dict[str, Version]  # em ordem de precedência
+    current_tag: str | None
+
+    @property
+    def final(self) -> Version | None:
+        return self.tags[self.final_tag] if self.final_tag else None
+
+    @property
+    def current(self) -> Version | None:
+        return self.tags[self.current_tag] if self.current_tag else None
+
+    @property
+    def floor(self) -> tuple[str, Version] | None:
+        """``(tag, núcleo)`` do maior alvo que o ciclo já publicou em pré-release."""
+        core = cycle_floor(self.cycle.values())
+        if core is None:
+            return None
+        return [tag for tag, version in self.cycle.items() if version.final == core][-1], core
 
 
 class Repo:
@@ -150,12 +196,29 @@ class Repo:
                 tags[tag.strip()] = version
         return tags
 
-    def latest(self, ref: str, *, final_only: bool) -> tuple[str, Version] | None:
-        tags = {tag: v for tag, v in self.version_tags(ref).items() if not (final_only and v.is_prerelease)}
-        if not tags:
-            return None
-        tag = max(tags, key=lambda name: tags[name].key())
-        return tag, tags[tag]
+    def line(self, ref: str, *, exclude: str | None = None) -> Line:
+        """A situação da linha de ``ref``. ``exclude`` ignora uma tag (a que está sendo publicada)."""
+        tags = self.version_tags(ref)
+        if exclude:
+            tags.pop(exclude, None)
+        finals = {tag: version for tag, version in tags.items() if not version.is_prerelease}
+        final_tag = max(finals, key=lambda name: finals[name].key()) if finals else None
+        behind = self.version_tags(final_tag) if final_tag else {}
+        names = sorted((t for t, v in tags.items() if v.is_prerelease and t not in behind), key=lambda t: tags[t].key())
+        cycle = {tag: tags[tag] for tag in names}
+        current_tag = final_tag
+        if cycle:
+            # A mais recente pelo grafo, não a de maior número: é a que os arquivos de versão trazem.
+            limit = [f"^{final_tag}"] if final_tag else []
+            newest = self.git("rev-list", "--topo-order", "-n", "1", *cycle, *limit)
+            here = set(self.git("tag", "--list", f"{self.cfg.tag_prefix}*", "--points-at", newest).split())
+            current_tag = [tag for tag in cycle if tag in here][-1]
+        return Line(tags, final_tag, cycle, current_tag)
+
+    def current(self, ref: str) -> tuple[str, Version] | None:
+        """``(tag, versão)`` corrente da linha de ``ref``; ``None`` enquanto não há tag de versão."""
+        line = self.line(ref)
+        return (line.current_tag, line.tags[line.current_tag]) if line.current_tag else None
 
     def log(self, revision: str, *, first_parent: bool = False, no_merges: bool = False) -> list[Commit]:
         args = ["log", "--reverse", "--format=%H%x00%P%x00%s%x00%b%x01"]
@@ -527,14 +590,11 @@ def build_plan(
     exclude_tag: str | None = None,
 ) -> Plan:
     """Calcula o plano para ``head``. ``pending=(PR, head_ref)`` simula o merge de um PR aberto."""
-    tags = repo.version_tags(head)
-    if exclude_tag:
-        tags.pop(exclude_tag, None)
-    finals = {tag: version for tag, version in tags.items() if not version.is_prerelease}
-    base_tag = max(finals, key=lambda name: finals[name].key()) if finals else None
+    line = repo.line(head, exclude=exclude_tag)
+    base_tag = line.final_tag
     initial = Version.parse(str(cfg.versioning["initial_version"]))
-    base_version = finals[base_tag] if base_tag else initial
-    files_version = highest(tags.values()) or initial
+    base_version = line.final or initial
+    files_version = line.current or initial
 
     collector = Collector(cfg, repo, github)
     changes = collector.collect(base_tag, head)
@@ -556,6 +616,8 @@ def build_plan(
         override=override or release_override(changes, cfg),
         version=None,
         prerelease=prerelease,
+        previous_tag=line.current_tag,
+        cycle=list(line.cycle),
     )
     zero_major = cfg.versioning["zero_major"]
     plan.level = plan.natural
@@ -564,6 +626,7 @@ def build_plan(
         plan.notes.append("Nenhum sinal pede incremento; uma versão publicada sobe ao menos o patch.")
     if fixed_version is not None:
         plan.version = fixed_version
+        plan.prerelease = fixed_version.pre[0] if fixed_version.is_prerelease else None
         return plan
     if not changes:
         if forced:
@@ -579,6 +642,15 @@ def build_plan(
                 "Versão 0.x: a quebra de compatibilidade sobe o minor. Para declarar a API estável e ir a 1.0.0, "
                 f"use o label `{cfg.override_label('major')}` no PR de release."
             )
+    started = line.floor
+    if started and started[1].key() > target.key():
+        # O ciclo já publicou pré-releases de um alvo maior: descer faria a versão regredir.
+        tag, core = started
+        if plan.override:
+            plan.problems.append(cfg.t("plan.cycle.override_below", target=target, floor=core, tag=tag))
+        else:
+            plan.notes.append(cfg.t("plan.cycle.floor", target=target, floor=core, tag=tag))
+            plan.level, target = level_between(base_version, core), core
     floor = floor_requirement(cfg, repo)
     if floor and floor[0].key() > target.key():
         version, path = floor
@@ -596,14 +668,33 @@ def build_plan(
                 f"`{path}` declara o piso {version}, maior que a versão {target} que seria publicada. "
                 "Corrija o piso ou classifique a mudança de modo que a versão o alcance."
             )
+    everything = repo.version_tags()
     if prerelease:
-        target = next_prerelease(target, prerelease, repo.version_tags().values(), cfg.prerelease_channels)
+        target = next_prerelease(target, prerelease, everything.values(), cfg.prerelease_channels)
+        ahead = not_surpassed(target, line.cycle.values())
+        if ahead is not None:
+            plan.problems.append(
+                cfg.t(
+                    "plan.channel.regressed",
+                    channel=prerelease,
+                    current=ahead.pre[0],
+                    core=target.core,
+                    tag=f"{cfg.tag_prefix}{ahead}",
+                )
+            )
     plan.version = target
-    if f"{cfg.tag_prefix}{target}" in repo.version_tags():
+    elsewhere = sorted(
+        (tag for tag, version in everything.items() if version.final == target.final and tag not in line.tags),
+        key=lambda tag: everything[tag].key(),
+    )
+    if f"{cfg.tag_prefix}{target}" in everything:
         plan.problems.append(
             f"A tag {cfg.tag_prefix}{target} já existe. Numa branch de manutenção só cabem correções; "
             "confira a branch e o nível calculado."
         )
+    elif elsewhere:
+        # Outra linha já usa este núcleo (o ciclo da branch principal, por exemplo): não se divide um número.
+        plan.problems.append(cfg.t("plan.core.taken", core=target.core, tags=", ".join(elsewhere)))
     if cfg.versioning["require_analysis"] and not plan.override:
         uncovered = [change.key for change in changes if change.needs_review and not change.analyzed]
         if uncovered:

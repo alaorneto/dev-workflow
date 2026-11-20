@@ -6,7 +6,7 @@ Conteúdo: [de onde vem a versão](#de-onde-vem-a-versão) · [o PR gera versão
 
 ## De onde vem a versão
 
-A fonte única é o git: **a versão corrente é a maior tag de versão alcançável a partir da branch** (`v1.4.2` com o prefixo padrão). Tudo que está entre essa tag e a ponta da branch ainda não foi publicado. Os arquivos que carregam o número (`pyproject.toml`, `package.json`, um manifesto) são projeções: a automação os reescreve a partir da lista `[[versioning.files]]` da configuração, e ninguém os edita à mão.
+A fonte única é o git: **a versão corrente é a última tag de versão alcançável a partir da branch** (`v1.4.2` com o prefixo padrão). É a maior versão final alcançável ou, durante um ciclo de pré-releases, a pré-release mais recente dele (veja [pré-release](#pré-release)). Tudo que está entre a última versão final e a ponta da branch ainda não saiu numa versão final. Os arquivos que carregam o número (`pyproject.toml`, `package.json`, um manifesto) são projeções: a automação os reescreve a partir da lista `[[versioning.files]]` da configuração, e ninguém os edita à mão.
 
 Enquanto o projeto não tem nenhuma tag, vale `versioning.initial_version`. `release.py baseline --push` cria a tag de base nesse número, uma vez.
 
@@ -129,21 +129,29 @@ Pelo workflow é preferível: usa a identidade e as permissões do CI. Localment
 ## Pré-release
 
 ```bash
-gh workflow run release.yml -f force=true -f prerelease=rc
+gh workflow run release.yml -f prerelease=rc      # ou: python3 S/release.py run --prerelease rc
 ```
 
 Publica `X.Y.Z-rc.1` (depois `-rc.2`…), em que `X.Y.Z` é a versão que o acumulado pediria. O canal tem de ser um dos de `versioning.prerelease.channels` (padrão: `alpha`, `beta`, `rc`); outro texto é recusado com a lista dos aceitos. Escreve o número nos arquivos de versão (com `{current_pep440}` a forma é `X.Y.Zrc1`), cria a tag e uma GitHub Release marcada como pré-release. Não toca o changelog nem comenta PRs e issues: isso acontece na versão final, que cobre tudo desde a última versão final.
 
-Como um PR `release` publica a versão final assim que é mesclado, as pré-releases servem para o período em que os PRs entram sem `release`.
+Como um PR `release` publica a versão final assim que é mesclado, as pré-releases servem para o período em que os PRs entram sem `release`. Pedir um canal já é pedir a publicação: `--prerelease` dispensa `--force`.
+
+O **ciclo** são as pré-releases publicadas desde a última versão final (as tags de pré-release alcançáveis da branch e não dessa final). Enquanto ele está aberto, nada regride:
+
+- **O canal não volta.** Depois de `1.3.0-beta.2`, pedir `alpha` para o mesmo alvo é erro; `beta` continua a contagem (`-beta.3`) e `rc` promove (`-rc.1`, a numeração recomeça).
+- **O alvo não desce.** Se o ciclo já publicou `1.0.0-rc.1` (por uma sobreposição, por exemplo), a versão seguinte fica em `1.0.0` mesmo que o cálculo desse menos, e as notas dizem por quê. Uma sobreposição que peça um número abaixo desse alvo para a release com erro, em vez de ser elevada em silêncio.
+- **Um número pertence a uma linha só.** Se outra branch já tem tag de `1.3.0` (uma pré-release do ciclo da branch principal, por exemplo), uma linha de manutenção que calcule `1.3.0` para com erro.
+
+O ciclo é lido do histórico, não da comparação de números: num repositório em que uma versão final menor já foi publicada depois de uma pré-release maior, essa pré-release ficou para trás e nada é forçado a alcançá-la.
 
 ## Hotfix numa versão antiga
 
 1. Crie a linha de manutenção a partir da tag: `git switch -c release/1.4 v1.4.2 && git push -u origin release/1.4`. O padrão `release/*` já está em `repository.release_branches` e no gatilho do workflow.
 2. Abra o PR da correção **contra essa branch**, com label `release`.
-3. O merge publica `1.4.3`: a versão corrente de uma branch é a maior tag alcançável dela. A GitHub Release não é marcada como "latest" quando existe versão maior.
+3. O merge publica `1.4.3`: a versão corrente de uma branch vem das tags alcançáveis dela. A GitHub Release não é marcada como "latest" quando existe versão maior.
 4. Leve a correção para a branch principal com outro PR (`git cherry-pick`), que segue o fluxo normal.
 
-Numa linha de manutenção só cabem correções. Se o cálculo der um número que já existe (uma funcionalidade retroportada pedindo `1.5.0`), a release para com erro em vez de colidir.
+Numa linha de manutenção só cabem correções. Se o cálculo der um número que já existe (uma funcionalidade retroportada pedindo `1.5.0`) ou que outra linha já usa em pré-release, a release para com erro em vez de colidir.
 
 ## Desfazer uma release errada
 
@@ -168,7 +176,7 @@ Só o número estava errado e a tag ainda não foi criada (a execução falhou a
 |---|---|
 | `release.py status` / `plan [--format json] [--pr N]` | Mudanças pendentes, sinais e próxima versão; `--pr` inclui um PR aberto como se estivesse mesclado |
 | `release.py next [--level L]` | Só o número: o que o acumulado pede, ou o que um nível daria |
-| `release.py check [--tree DIR]` | Os arquivos de versão declarados estão coerentes com a versão corrente? `--tree` lê os arquivos de outra árvore (o checkout do PR) com a configuração desta e os compara com a versão de que essa árvore partiu: a maior tag alcançável da ponta dela (sem histórico na árvore, vale a versão corrente desta). Se a ponta dessa árvore é um commit de release (`chore(release): vX`) de uma versão acima da corrente e ainda sem tag, como no PR de release do modo `pull-request`, os arquivos têm de estar em X |
+| `release.py check [--tree DIR]` | Os arquivos de versão declarados estão coerentes com a versão corrente? `--tree` lê os arquivos de outra árvore (o checkout do PR) com a configuração desta e os compara com a versão de que essa árvore partiu: a versão corrente da linha dela (sem histórico na árvore, vale a versão corrente desta). Se a ponta dessa árvore é um commit de release (`chore(release): vX`) de uma versão acima da corrente e ainda sem tag, como no PR de release do modo `pull-request`, os arquivos têm de estar em X |
 | `release.py preview --pr N --base-ref R --head-ref H [--comment]` | A prévia que o CI comenta no PR |
 | `release.py record-analysis --pr N --file F` | Grava a análise por agente no PR |
 | `release.py run [--force] [--level L --reason "..."] [--prerelease canal] [--dry-run]` | Publica o que estiver pendente; reexecutar é seguro |

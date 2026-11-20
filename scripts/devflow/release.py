@@ -8,7 +8,7 @@
 - ``record-analysis --pr N --file F``: grava no PR a análise de versão feita por um agente.
 - ``baseline [--ref R] [--push]``: cria a tag de base quando o projeto ainda não tem tag.
 - ``run [--force] [--level L --reason "..."] [--prerelease canal] [--dry-run]``: publica o que
-  estiver pendente. É a máquina de estados que o workflow de release executa; rodar de novo
+  estiver pendente (``--prerelease`` já implica ``--force``). É a máquina de estados que o workflow de release executa; rodar de novo
   depois de concluir não faz nada, e rodar depois de uma falha conclui o que faltou.
 """
 
@@ -159,7 +159,7 @@ def check_version_files(cfg: Config, current: Version, *, root: Path | None = No
 
 
 def tree_latest(cfg: Config, tree: Path) -> tuple[str, Version] | None:
-    """A maior tag de versão alcançável da ponta de ``tree``, quando ela é um checkout com histórico.
+    """A versão corrente da linha de ``tree`` (``Repo.current``), quando ela é um checkout com histórico.
 
     O PR é conferido contra a versão de que partiu, não contra a da base: depois de uma release,
     um PR mais antigo ainda traz a versão anterior nos arquivos sem ter tocado neles. Só o git da
@@ -169,7 +169,7 @@ def tree_latest(cfg: Config, tree: Path) -> tuple[str, Version] | None:
     tree_git = Git(tree)
     if not tree_git.ok("rev-parse", "--verify", "--quiet", "HEAD^{commit}"):
         return None
-    return Repo(cfg, tree_git).latest("HEAD", final_only=False)
+    return Repo(cfg, tree_git).current("HEAD")
 
 
 # --- changelog ---------------------------------------------------------------------------------
@@ -516,7 +516,7 @@ def open_release_pr(session: Session, plan: Plan) -> None:
 def reconcile_latest(session: Session) -> None:
     """Uma tag de release sem GitHub Release (falha no meio) é concluída aqui."""
     cfg, github = session.cfg, session.github
-    latest = session.repo.latest("HEAD", final_only=False)
+    latest = session.repo.current("HEAD")
     if latest is None or not github.enabled:
         return
     tag, version = latest
@@ -552,6 +552,8 @@ def run(session: Session, args: argparse.Namespace) -> int:
         if not channels:
             raise ReleaseError(cfg.t("release.channel.none"))
         raise ReleaseError(cfg.t("release.channel.unknown", channel=args.prerelease, accepted=", ".join(channels)))
+    # Pedir um canal é pedir a publicação: sem isto o disparo manual não fazia nada, em silêncio.
+    args.force = args.force or bool(args.prerelease)
     override = Override(args.level, args.reason or "(motivo não informado)", "execução manual") if args.level else None
     analyses = []
     if args.analysis_file:
@@ -560,7 +562,7 @@ def run(session: Session, args: argparse.Namespace) -> int:
         git("fetch", "--tags", REMOTE, check=False)
     for _ in range(MAX_ROUNDS):
         reconcile_latest(session)
-        base = session.repo.latest("HEAD", final_only=False)
+        base = session.repo.current("HEAD")
         prepared = find_prepared(session, base[0] if base else None)
         if prepared and not args.dry_run:
             tag, version, target = prepared
@@ -651,7 +653,7 @@ def report(plan: Plan, cfg: Config, links: Links, *, pr: int | None = None, tabl
 
 def preview(session: Session, args: argparse.Namespace) -> int:
     cfg = session.cfg
-    if session.repo.latest(args.base_ref, final_only=False) is None:
+    if session.repo.current(args.base_ref) is None:
         # Antes da tag de base não há versão de referência: não é erro do PR, e o histórico inteiro
         # não é o que o PR publicaria.
         print("Sem tag de versão alcançável: a prévia começa depois de `release.py baseline`.")
@@ -785,7 +787,7 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--force", action="store_true", help="publica o acumulado mesmo sem PR marcado")
     command.add_argument("--level", choices=("", *LEVELS[1:]), default="")
     command.add_argument("--reason", default="")
-    command.add_argument("--prerelease", default="", help="canal de pré-release, por exemplo rc")
+    command.add_argument("--prerelease", default="", help="canal de pré-release, por exemplo rc; implica --force")
     command.add_argument("--analysis-file", default="")
     command.add_argument("--dry-run", action="store_true")
     return parser
@@ -815,8 +817,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "next":
             if args.level:
-                latest = session.repo.latest("HEAD", final_only=True)
-                base = latest[1] if latest else Version.parse(str(cfg.versioning["initial_version"]))
+                base = session.repo.line("HEAD").final or Version.parse(str(cfg.versioning["initial_version"]))
                 print(next_version(base, args.level, cfg.versioning["zero_major"]))
             else:
                 plan = build_plan(cfg, session.repo, session.github)
@@ -824,7 +825,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "check":
             # Repositório sem commit ainda (recém-adotado): vale a versão inicial da configuração.
-            latest = session.repo.latest("HEAD", final_only=False) if session.git.ok("rev-parse", "HEAD") else None
+            latest = session.repo.current("HEAD") if session.git.ok("rev-parse", "HEAD") else None
             current = latest[1] if latest else Version.parse(str(cfg.versioning["initial_version"]))
             tree = Path(args.tree).resolve() if args.tree else None
             if tree is not None and not tree.is_dir():
@@ -850,7 +851,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             return 1 if problems else 0
         if args.command == "bump":
-            latest = session.repo.latest("HEAD", final_only=False)
+            latest = session.repo.current("HEAD")
             current = latest[1] if latest else Version.parse(str(cfg.versioning["initial_version"]))
             changed = apply_version_files(cfg, current, Version.parse(args.to), write=not args.dry_run)
             print("\n".join(changed) or "Nenhum arquivo mudou.")

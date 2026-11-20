@@ -146,3 +146,25 @@ def next_prerelease(
 def highest(versions: Iterable[Version]) -> Version | None:
     ordered = sorted(versions, key=Version.key)
     return ordered[-1] if ordered else None
+
+
+def cycle_floor(cycle: Iterable[Version]) -> Version | None:
+    """O maior núcleo ``X.Y.Z`` que as pré-releases do ciclo já publicaram: o alvo não desce dele."""
+    return highest(version.final for version in cycle)
+
+
+def level_between(base: Version, target: Version) -> str:
+    """O nível que separa ``base`` de ``target`` (o primeiro número que muda)."""
+    if target.major != base.major:
+        return "major"
+    return "minor" if target.minor != base.minor else "patch"
+
+
+def not_surpassed(candidate: Version, cycle: Iterable[Version]) -> Version | None:
+    """A maior pré-release do mesmo núcleo que ``candidate`` não supera, ou ``None``.
+
+    Uma versão nova tem de ter precedência maior que tudo que o ciclo já publicou para o mesmo
+    alvo: ``1.3.0-alpha.1`` depois de ``1.3.0-beta.2`` regride. Em outro alvo a numeração recomeça.
+    """
+    same = [version for version in cycle if version.final == candidate.final and version.key() >= candidate.key()]
+    return highest(same)

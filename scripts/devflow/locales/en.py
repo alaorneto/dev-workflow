@@ -85,6 +85,23 @@ MESSAGES: dict[str, str] = {
     "config.channels.pep440_clash": (
         "has `{first}` and `{second}`, which become the same PEP 440 form (`{form}`); keep only one of them."
     ),
+    # --- version plan --------------------------------------------------------------------------
+    "plan.cycle.floor": (
+        "The cycle in progress has already published {tag}: the version does not go down, so the target stays at "
+        "{floor} (the calculation would give {target})."
+    ),
+    "plan.cycle.override_below": (
+        "The override asks for {target}, below {floor}, which the cycle in progress has already published as a "
+        "pre-release ({tag}). A version never goes back: drop the override or use a level that reaches {floor}."
+    ),
+    "plan.channel.regressed": (
+        "Channel `{channel}` comes before `{current}`, which the {core} cycle has already published ({tag}). "
+        "A pre-release never goes back a channel: use `{current}` or a more mature one."
+    ),
+    "plan.core.taken": (
+        "Version {core} already has a tag on another line ({tags}), out of reach of this branch. "
+        "Two lines never publish the same number: check the branch and the computed level."
+    ),
     # --- release -------------------------------------------------------------------------------
     "release.channel.unknown": (
         "Pre-release channel `{channel}` is not in the project's list. "
