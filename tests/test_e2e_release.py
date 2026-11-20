@@ -459,12 +459,68 @@ class PullRequestModeTest(SandboxCase):
         box.update_state(lambda state: state["pulls"]["1001"].update(state="closed", merged=True, merged_at="x"))
         out = self.assertRan(box.release())
         self.assertIn("Commit de release de v1.2.1 sem tag; publicando.", out)
-        self.assertEqual(box.git("rev-list", "-n", "1", "v1.2.1"), box.git("rev-parse", "HEAD"))
+        self.assertEqual(box.git("rev-list", "-n", "1", "v1.2.1"), box.git("rev-parse", "HEAD^2"))
         self.assertIn('version = "1.2.1"', box.read("pyproject.toml"))
         state = box.state()
         self.assertIn("Corrigir a lista vazia", state["releases"]["v1.2.1"]["body"])
         self.assertEqual(len(_bodies(state, 10)), 1)
         self.assertIn("Nada a versionar", self.assertRan(box.release()))
+
+    def _merge_release_pr(self):
+        box = self.box
+        box.git("fetch", "-q", "origin", "release/next")
+        box.git("merge", "-q", "--no-ff", "FETCH_HEAD", "-m", "Merge pull request #1001 from acme/release/next")
+        box.git("push", "-q", "origin", "main")
+        box.update_state(lambda state: state["pulls"]["1001"].update(state="closed", merged=True, merged_at="x"))
+
+    def _open_release_pr(self):
+        (pull,) = [pull for pull in self.box.state()["pulls"].values() if pull["state"] == "open"]
+        return pull
+
+    def test_the_release_pr_branch_itself_never_publishes(self):
+        box = self._prepare()
+        box.git("fetch", "-q", "origin", "release/next")
+        box.git("switch", "-q", "-c", "release/next", "FETCH_HEAD")
+        out = self.assertRan(box.release(env={"RELEASE_BRANCH": "release/next"}))
+        self.assertIn("é a do PR de release", out)
+        self.assertEqual((box.tags(), box.remote_tags()), (["v1.2.0"], ["v1.2.0"]))
+        self.assertEqual(box.state()["releases"], {})
+
+    def test_the_merged_release_pr_is_not_a_change_of_this_version_nor_of_the_next(self):
+        box = self._prepare()
+        self._merge_release_pr()
+        self.assertRan(box.release())
+        state = box.state()
+        self.assertNotIn("#1001", state["releases"]["v1.2.1"]["body"])
+        self.assertNotIn("#1001", box.git("tag", "-l", "--format=%(contents)", "v1.2.1"))
+        self.assertNotIn("1001", state["comments"])
+        # a tag fica no commit de release; o merge commit vem depois dela e não é mudança
+        self.assertEqual(box.git("rev-list", "-n", "1", "v1.2.1"), box.git("rev-parse", "HEAD^2"))
+        self.assertIn("Nada a versionar: 0 mudança(s)", self.assertRan(box.release()))
+
+        box.issue(2, "Exportar em CSV", "feature")
+        box.merge_pr(11, "feat: add the export command", FEAT, labels=["release"], closes=[2])
+        self.assertRan(box.release())
+        pull = self._open_release_pr()
+        self.assertEqual(pull["title"], "chore(release): v1.3.0")
+        self.assertIn("Exportar em CSV", pull["body"])
+        self.assertNotIn("#1001", pull["body"])
+        self.assertNotIn("Corrigir a lista vazia", pull["body"])
+
+    def test_a_pr_merged_while_the_release_pr_was_open_waits_for_the_next_version(self):
+        box = self._prepare()  # o PR de release cobre só o PR 10
+        box.issue(2, "Exportar em CSV", "feature")
+        box.merge_pr(11, "feat: add the export command", FEAT, closes=[2])
+        self._merge_release_pr()  # mesclado sem ter sido refeito sobre o PR 11
+        out = self.assertRan(box.release())
+        self.assertEqual(box.tags(), ["v1.2.0", "v1.2.1"])
+        self.assertNotIn("Exportar em CSV", box.read("CHANGELOG.md"))
+        self.assertIn("Nada a versionar: 1 mudança(s) acumulada(s) desde v1.2.1", out)
+
+        self.assertRan(box.release("--force"))
+        pull = self._open_release_pr()
+        self.assertEqual(pull["title"], "chore(release): v1.3.0")
+        self.assertIn("Exportar em CSV", pull["body"])
 
     def test_the_pr_check_accepts_the_release_pr_and_only_it(self):
         box = self._prepare()

@@ -332,7 +332,10 @@ class Collector:
             number = self.pr_number(commit)
             parent = commit.parents[0] if commit.parents else None
             members = self.repo.log(f"{parent}..{commit.sha}", no_merges=True) if len(commit.parents) > 1 else [commit]
+            carried = len(members)
             members = [c for c in members if not marker.match(c.subject)]
+            if len(commit.parents) > 1 and carried and not members:
+                continue  # merge do PR de release: só traz o commit de release, que não é mudança
             if number is not None:
                 change = changes.setdefault(f"#{number}", self._pr_change(number, commit.sha, commit.subject))
                 change.sha = commit.sha
