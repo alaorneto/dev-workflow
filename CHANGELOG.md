@@ -2,6 +2,19 @@
 
 As versões depois da tag de base são escritas pelo workflow de release (`scripts/release.py run`): não edite as seções de versão à mão.
 
+## [1.0.4](https://github.com/alaorneto/dev-workflow/compare/v1.0.3...v1.0.4) — 2026-11-20
+
+### Correções
+
+- Publicar só o commit de release criado pela automação ([#19](https://github.com/alaorneto/dev-workflow/issues/19)) — PR [#43](https://github.com/alaorneto/dev-workflow/pull/43)
+- Corrigir o modo pull-request: não publicar de release/next nem perder mudanças ([#20](https://github.com/alaorneto/dev-workflow/issues/20)) — PR [#44](https://github.com/alaorneto/dev-workflow/pull/44)
+- Aceitar PR aberto antes da última release no check de arquivos de versão ([#21](https://github.com/alaorneto/dev-workflow/issues/21)) — PR [#45](https://github.com/alaorneto/dev-workflow/pull/45)
+- Impedir que o * dos globs cruze diretórios ([#22](https://github.com/alaorneto/dev-workflow/issues/22)) — PR [#46](https://github.com/alaorneto/dev-workflow/pull/46)
+
+### Documentação
+
+- Reescrever o README em inglês com as regras de negócio do fluxo ([#7](https://github.com/alaorneto/dev-workflow/issues/7)) — PR [#8](https://github.com/alaorneto/dev-workflow/pull/8)
+
 ## [1.0.3](https://github.com/alaorneto/dev-workflow/compare/v1.0.2...v1.0.3) — 2026-11-20
 
 ### Correções
