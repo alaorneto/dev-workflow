@@ -135,7 +135,7 @@ def is_exempt(pr: dict[str, Any], cfg: Config) -> str | None:
     author = str((pr.get("user") or {}).get("login", ""))
     if author in cfg.pr["exempt_authors"]:
         return f"PR de {author}: isento do fluxo de issues."
-    if str((pr.get("head") or {}).get("ref", "")) == cfg.release["pr_branch"]:
+    if cfg.is_release_pull(pr):
         return "PR de release gerado pela automação: isento."
     return None
 
@@ -156,7 +156,10 @@ def override_reason(body: str, cfg: Config) -> str:
     return marked_value(section(body, cfg.pr["version_section"]), str(cfg.pr["override_reason_marker"]))
 
 
-def check_pull_request(pr: dict[str, Any], repository: str, fetch: IssueFetcher, cfg: Config) -> Findings:
+def check_pull_request(
+    pr: dict[str, Any], repository: str, fetch: IssueFetcher, cfg: Config, commits: Sequence[str] = ()
+) -> Findings:
+    """``commits`` são os assuntos dos commits do PR, quando quem chama os tem."""
     findings = Findings()
     exemption = is_exempt(pr, cfg)
     if exemption:
@@ -197,6 +200,14 @@ def check_pull_request(pr: dict[str, Any], repository: str, fetch: IssueFetcher,
                     f"Sobreposição de versão sem motivo: escreva `{cfg.pr['override_reason_marker']}: <motivo>` "
                     f"na seção `## {cfg.pr['version_section']}`."
                 )
+        marker = cfg.release_subject_pattern()
+        forged = [("título", title)] if marker.match(title) else []
+        forged += [("commit", subject) for subject in dict.fromkeys(commits) if marker.match(subject)]
+        for where, subject in forged[:1]:
+            findings.errors.append(
+                f"O {where} `{subject}` tem o formato do commit de release, que só a automação cria: ele não "
+                f"publica versão e some do changelog. Troque o texto; para publicar, use o label `{release}`."
+            )
 
     conventional = parse_conventional(title)
     if not re.match(cfg.pr["title_pattern"], title):
@@ -278,7 +289,11 @@ def check_pr_command(args: Sequence[str], cfg: Config) -> int:
             cache[issue] = github.issue(issue)
         return cache[issue]
 
-    findings = check_pull_request(pr, str(github.repository), fetch, cfg)
+    subjects: list[str] = []
+    if cfg.versioning_enabled and not is_exempt(pr, cfg):
+        messages = [str((commit.get("commit") or {}).get("message", "")) for commit in github.pull_commits(number)]
+        subjects = [message.splitlines()[0] for message in messages if message.strip()]
+    findings = check_pull_request(pr, str(github.repository), fetch, cfg, subjects)
     for note in findings.notes:
         print(note)
     for warning in findings.warnings:

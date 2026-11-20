@@ -29,6 +29,8 @@ from .config import Config, ConfigError, load
 from .gh import CommandError, Git, GitHub, current_repository, is_trusted_author, utf8_streams
 from .plan import (
     ANALYSIS_MARK,
+    Collector,
+    Commit,
     Links,
     Override,
     Plan,
@@ -40,7 +42,7 @@ from .plan import (
     validate_analysis,
 )
 from .semver import LEVELS, Version, highest, next_version
-from .text import REVERTS
+from .text import MERGE_PR, REVERTS
 
 PREVIEW_MARK = "<!-- dev-workflow:preview -->"
 RELEASED_MARK = "<!-- dev-workflow:released {tag} -->"
@@ -317,14 +319,49 @@ def prepare(session: Session, plan: Plan) -> str:
     return git("rev-parse", "HEAD")
 
 
+def release_commit_refusal(session: Session, collector: Collector, commit: Commit, revision: str) -> str | None:
+    """Por que um commit com assunto de release não é da automação; ``None`` quando é.
+
+    Só dois caminhos trazem um commit de release legítimo: o push direto (o commit está no primeiro
+    pai e nenhum PR o trouxe) e o merge do PR de release deste repositório. O assunto sozinho não
+    prova nada, porque qualquer PR pode conter um commit com esse texto.
+    """
+    cfg, git, github = session.cfg, session.git, session.github
+    mainline = session.repo.log(revision, first_parent=True)
+    carrier = next(
+        (c for c in mainline if c.sha == commit.sha or git.ok("merge-base", "--is-ancestor", commit.sha, c.sha)),
+        None,
+    )
+    if carrier is None:
+        return None  # fora do primeiro pai deste intervalo: `find_prepared` já não o publica
+    branch = cfg.release["pr_branch"]
+    if not github.enabled:  # sem a API vale o que o git mostra: o assunto do merge
+        merge = MERGE_PR.match(carrier.subject)
+        owner = (github.repository or "").split("/", 1)[0].lower()
+        ours = merge is not None and merge.group("branch") == branch
+        if carrier.sha == commit.sha or (ours and (not owner or str(merge.group("owner")).lower() == owner)):
+            return None
+        return f"chegou pelo merge {carrier.sha[:7]}, que não é do PR de release (`{branch}` deste repositório)"
+    number = collector.pr_number(carrier)
+    if number is None:
+        if carrier.sha == commit.sha:
+            return None
+        return f"chegou pelo merge {carrier.sha[:7]}, que não é de um PR"
+    if cfg.is_release_pull(collector.pull(number)):
+        return None
+    return f"chegou pelo PR #{number}, que não é o PR de release (`{branch}` deste repositório)"
+
+
 def find_prepared(session: Session, base_tag: str | None, head: str = "HEAD") -> tuple[str, Version, str] | None:
     """Commit de release ainda sem tag: ``(tag, versão, commit a marcar)``.
 
     Cobre a retomada depois de uma falha entre o push e a tag, e o modo por PR, em que o commit
-    chega à branch por merge, squash ou rebase. Um commit de release revertido não conta.
+    chega à branch por merge, squash ou rebase. Um commit de release revertido não conta, nem um
+    que não veio da automação (veja ``release_commit_refusal``).
     """
     cfg, repo = session.cfg, session.repo
     marker = cfg.release_subject_pattern()
+    collector = Collector(cfg, repo, session.github)
     commits = repo.log(f"{base_tag}..{head}" if base_tag else head)
     reverted = {sha for commit in commits for sha in REVERTS.findall(commit.body)}
     existing = repo.version_tags()
@@ -338,6 +375,11 @@ def find_prepared(session: Session, base_tag: str | None, head: str = "HEAD") ->
         if version is None or tag in existing:
             continue
         if base_version is not None and version.key() <= base_version.key():
+            continue
+        refusal = release_commit_refusal(session, collector, commit, f"{base_tag}..{head}" if base_tag else head)
+        if refusal:
+            text = f"Commit de release {commit.sha[:7]} ({tag}) ignorado: {refusal}. Nenhuma versão sai dele."
+            print(f"::warning title=Release::{text}" if os.environ.get("GITHUB_ACTIONS") else f"aviso: {text}")
             continue
         for candidate in repo.log(f"{base_tag}..{head}" if base_tag else head, first_parent=True):
             if candidate.sha == commit.sha or session.git.ok("merge-base", "--is-ancestor", commit.sha, candidate.sha):

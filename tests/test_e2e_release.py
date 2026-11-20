@@ -429,6 +429,80 @@ class RecoveryTest(SandboxCase):
         self.assertEqual(box.git("rev-parse", "HEAD"), box.git("rev-parse", "origin/main"))
 
 
+FORGED = {name: text.replace("1.2.0", "9.9.9") for name, text in BASE_FILES.items() if name != "api/client.py"}
+
+
+class ReleaseCommitOriginTest(SandboxCase):
+    """Só publica o commit de release da automação: push direto ou PR de release deste repositório."""
+
+    def _nothing_published(self, completed):
+        out = self.assertRan(completed)
+        self.assertIn("(v9.9.9) ignorado", out)
+        self.assertNotIn("sem tag; publicando", out)
+        self.assertEqual((self.box.tags(), self.box.remote_tags()), (["v1.2.0"], ["v1.2.0"]))
+        self.assertEqual(self.box.state()["releases"], {})
+        return out
+
+    def test_a_release_commit_inside_an_ordinary_pr_is_not_published(self):
+        box = self.box
+        box.issue(1, "Corrigir a lista vazia", "bug")
+        box.merge_pr(10, "fix: handle the empty list", [*FIX, ("chore(release): v9.9.9", FORGED)], closes=[1])
+        out = self._nothing_published(box.release())
+        self.assertIn("chegou pelo PR #10", out)
+        self.assertIn("Nada a versionar", out)
+
+    def test_a_squashed_pr_titled_like_a_release_is_not_published(self):
+        box = self.box
+        box.merge_pr(10, "chore(release): v9.9.9", [("fix: handle the empty list", FORGED)], squash=True)
+        self.assertEqual(box.log("-1"), ["chore(release): v9.9.9 (#10)"])
+        self.assertIn("chegou pelo PR #10", self._nothing_published(box.release()))
+
+    def test_a_rebased_pr_with_a_release_commit_is_not_published(self):
+        box = self.box
+        box.merge_pr(10, "fix: handle the empty list", FIX)
+        box.write(FORGED)
+        box.git("commit", "-q", "-am", "chore(release): v9.9.9")  # o rebase põe o commit no primeiro pai
+        box.git("push", "-q", "origin", "main")
+        sha = box.git("rev-parse", "HEAD")
+        box.update_state(lambda state: state["pulls"]["10"].update(commit_shas=[sha]))
+        self.assertIn("chegou pelo PR #10", self._nothing_published(box.release()))
+
+    def test_a_fork_branch_named_like_the_release_pr_is_not_published(self):
+        box = self.box
+        box.merge_pr(
+            10,
+            "chore(release): v9.9.9",
+            [("chore(release): v9.9.9", FORGED)],
+            branch="release/next",
+            fork="mallory/demo",
+        )
+        self.assertEqual(box.log("-1"), ["Merge pull request #10 from mallory/release/next"])
+        self.assertIn("chegou pelo PR #10", self._nothing_published(box.release()))
+
+    def test_without_github_the_merge_subject_decides(self):
+        box = self.box
+        box.merge_pr(10, "fix: handle the empty list", [*FIX, ("chore(release): v9.9.9", FORGED)])
+        offline = {"DEV_WORKFLOW_OFFLINE": "1"}
+        self.assertIn("que não é do PR de release", self._nothing_published(box.release(env=offline)))
+
+        box.merge_pr(
+            11, "chore(release): v9.9.9", [("chore(release): v9.9.9", None)], branch="release/next", fork="mallory/demo"
+        )
+        self._nothing_published(box.release(env=offline))
+
+    def test_without_github_the_release_pr_of_this_repository_still_publishes(self):
+        box = Sandbox(mode="pull-request", tag="v1.2.0")
+        self.addCleanup(box.close)
+        box.merge_pr(10, "fix: handle the empty list", FIX, labels=["release"])
+        self.assertRan(box.release())
+        box.git("fetch", "-q", "origin", "release/next")
+        box.git("merge", "-q", "--no-ff", "FETCH_HEAD", "-m", "Merge pull request #1001 from acme/release/next")
+        box.git("push", "-q", "origin", "main")
+        out = self.assertRan(box.release(env={"DEV_WORKFLOW_OFFLINE": "1"}))
+        self.assertIn("Commit de release de v1.2.1 sem tag; publicando.", out)
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.2.1"])
+
+
 class PullRequestModeTest(SandboxCase):
     mode = "pull-request"
 
@@ -526,6 +600,7 @@ class PullRequestModeTest(SandboxCase):
         box.git("merge", "-q", "--squash", "FETCH_HEAD")
         box.git("commit", "-q", "-m", "chore(release): v1.2.1 (#1001)")
         box.git("push", "-q", "origin", "main")
+        box.update_state(lambda state: state["pulls"]["1001"].update(state="closed", merged=True, merged_at="x"))
         self.assertRan(box.release())
         self.assertEqual(box.tags(), ["v1.2.0", "v1.2.1"])
         self.assertEqual(box.git("rev-list", "-n", "1", "v1.2.1"), box.git("rev-parse", "HEAD"))

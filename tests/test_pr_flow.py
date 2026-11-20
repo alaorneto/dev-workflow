@@ -16,7 +16,14 @@ ISSUE_BODY = "\n\n".join(f"## {name}\nconteúdo" for name in CFG.issue_sections(
 )
 
 
-def _pr(title="feat: add the export command", labels=("release",), body=None, author="alice", head="feat/1-export"):
+def _pr(
+    title="feat: add the export command",
+    labels=("release",),
+    body=None,
+    author="alice",
+    head="feat/1-export",
+    repo="acme/demo",
+):
     return {
         "number": 9,
         "title": title,
@@ -25,7 +32,8 @@ def _pr(title="feat: add the export command", labels=("release",), body=None, au
         else body,
         "labels": [{"name": name} for name in labels],
         "user": {"login": author},
-        "head": {"ref": head},
+        "head": {"ref": head, "repo": {"full_name": repo} if repo else None},
+        "base": {"ref": "main", "repo": {"full_name": "acme/demo"}},
     }
 
 
@@ -94,6 +102,23 @@ class CheckPullRequestTest(unittest.TestCase):
             findings = _check(pr)
             self.assertEqual((findings.errors, len(findings.notes)), ([], 1))
 
+    def test_a_fork_branch_named_like_the_release_pr_is_checked_like_any_other(self):
+        for repo in ("mallory/demo", None):  # None: o fork foi apagado e a API devolve `head.repo: null`
+            findings = _check(_pr(head="release/next", body="", labels=(), repo=repo))
+            self.assertEqual(findings.notes, [])
+            self.assertIn("não referencia issue", findings.errors[0])
+        self.assertEqual(_check(_pr(head="release/next", body="", labels=(), repo="Acme/Demo")).errors, [])
+
+    def test_an_ordinary_pr_cannot_carry_a_release_commit(self):
+        by_title = _check(_pr(title="chore(release): v9.9.9"))
+        self.assertIn("O título `chore(release): v9.9.9` tem o formato do commit de release", by_title.errors[0])
+        commits = ["fix: handle the empty list", "chore(release): v9.9.9"]
+        by_commit = check_pull_request(_pr(), "acme/demo", _fetch(), CFG, commits)
+        self.assertIn("O commit `chore(release): v9.9.9` tem o formato do commit de release", by_commit.errors[0])
+        self.assertEqual(check_pull_request(_pr(), "acme/demo", _fetch(), CFG, commits[:1]).errors, [])
+        off = Config({"versioning": {"enabled": False}})
+        self.assertEqual(check_pull_request(_pr(labels=()), "acme/demo", _fetch(), off, commits).errors, [])
+
     def test_without_versioning_the_override_labels_are_not_checked(self):
         cfg = Config({"versioning": {"enabled": False}})
         self.assertEqual(_check(_pr(labels=("semver:patch",)), cfg=cfg).errors, [])
@@ -158,6 +183,15 @@ class MergedPullRequestTest(SandboxCase):
         self.assertIn("só vale em PR marcado com `release`", completed.stdout)
         box.update_state(lambda state: state["pulls"]["10"].update(labels=[]))
         self.assertEqual(box.run("github_issues.py", "check-pr", "--pr", "10").returncode, 0)
+
+    def test_check_pr_reads_the_commits_and_refuses_a_release_commit(self):
+        box = self.box
+        box.issue(1, "Exportar em CSV", "feature")
+        commits = [("feat: add the export command", None), ("chore(release): v9.9.9", None)]
+        box.open_pr(11, "feat: add the export command", commits, closes=[1])
+        completed = box.run("github_issues.py", "check-pr", "--pr", "11")
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("O commit `chore(release): v9.9.9` tem o formato do commit de release", completed.stdout)
 
 
 class CommitMsgHookTest(SandboxCase):

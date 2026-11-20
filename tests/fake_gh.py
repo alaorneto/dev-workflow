@@ -31,7 +31,7 @@ def utf16_length(text):
     return len(text.encode("utf-16-le")) // 2
 
 
-def handle(method, path, query, body, state):
+def handle(method, path, query, body, state, repository=""):
     actor = state.get("actor", {"login": "github-actions[bot]", "association": "NONE"})
     # Limites do GitHub: o corpo de release vai até 125 000 caracteres; PR, issue e comentário, 65 536.
     limit = 125_000 if path == "releases" else 65_536
@@ -66,8 +66,8 @@ def handle(method, path, query, body, state):
             "user": {"login": actor["login"]},
             "title": body["title"],
             "body": body.get("body", ""),
-            "head": {"ref": body["head"]},
-            "base": {"ref": body["base"]},
+            "head": {"ref": body["head"], "repo": {"full_name": repository}},
+            "base": {"ref": body["base"], "repo": {"full_name": repository}},
         }
         state["pulls"][str(number)] = pull
         return pull
@@ -161,11 +161,12 @@ def main(argv):
     body = json.loads(sys.stdin.read()) if has_input else None
     parts = urlsplit(target)
     path = re.sub(r"^repos/[^/]+/[^/]+/?", "", parts.path)
+    slug = re.match(r"^repos/([^/]+/[^/]+)", parts.path)
     state_path = os.environ["FAKE_GH_STATE"]
     with open(state_path, encoding="utf-8") as file:
         state = json.load(file)
     state.setdefault("log", []).append(f"{method} {path}")
-    result = handle(method, path, parse_qs(parts.query), body, state)
+    result = handle(method, path, parse_qs(parts.query), body, state, slug[1] if slug else "")
     with open(state_path, "w", encoding="utf-8") as file:
         json.dump(state, file, ensure_ascii=False, indent=1)
     if isinstance(result, SystemExit):
