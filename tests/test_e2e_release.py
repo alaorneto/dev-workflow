@@ -471,7 +471,9 @@ class PullRequestModeTest(SandboxCase):
         for number in range(1, 36):
             box.issue(number, f"Corrigir o caso {number}{padding}", "bug")
             labels = ["release"] if number == 35 else []
-            box.merge_pr(100 + number, f"fix: case {number}", [(f"fix: case {number}", None)], labels=labels, closes=[number])
+            box.merge_pr(
+                100 + number, f"fix: case {number}", [(f"fix: case {number}", None)], labels=labels, closes=[number]
+            )
 
         out = self.assertRan(box.release())
         self.assertIn("PR de release #1001 aberto para v1.2.1.", out)
@@ -480,7 +482,9 @@ class PullRequestModeTest(SandboxCase):
         self.assertIn("dev-workflow:release-pr", body)
         self.assertIn("não cabe aqui", body)
         self.assertNotIn("| Mudança | Nível | Sinais |", body)
-        self.assertIn("a lista completa está no [CHANGELOG.md](https://github.com/acme/demo/blob/release/next/CHANGELOG.md)", body)
+        self.assertIn(
+            "a lista completa está no [CHANGELOG.md](https://github.com/acme/demo/blob/release/next/CHANGELOG.md)", body
+        )
 
         box.git("fetch", "-q", "origin", "release/next")
         box.git("merge", "-q", "--no-ff", "FETCH_HEAD", "-m", "Merge pull request #1001 from acme/release/next")
