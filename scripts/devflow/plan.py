@@ -7,7 +7,7 @@ para saber o que já saiu; labels e comentários só informam *como* versionar.
 
 from __future__ import annotations
 
-import fnmatch
+import functools
 import json
 import re
 from dataclasses import dataclass, field
@@ -197,14 +197,46 @@ class Repo:
         return self.git("ls-files").splitlines()
 
 
+@functools.cache
+def _glob_regex(pattern: str) -> re.Pattern[str]:
+    """Glob de caminho como expressão regular.
+
+    ``*``, ``?`` e ``[...]`` ficam dentro de um nível de diretório; ``**/`` vale zero ou mais
+    diretórios e ``**`` em outra posição vale qualquer coisa. ``fnmatch`` não serve aqui: nele o
+    ``*`` também casa ``/``, e ``scripts/*.py`` cobriria os subdiretórios.
+    """
+    parts: list[str] = []
+    index, size = 0, len(pattern)
+    while index < size:
+        char = pattern[index]
+        if pattern.startswith("**/", index) and (index == 0 or pattern[index - 1] == "/"):
+            parts.append("(?:[^/]+/)*")
+            index += 3
+        elif pattern.startswith("**", index):
+            parts.append(".*")
+            index += 2
+        elif char == "*":
+            parts.append("[^/]*")
+            index += 1
+        elif char == "?":
+            parts.append("[^/]")
+            index += 1
+        elif char == "[" and "]" in pattern[index + 2 :]:
+            end = pattern.index("]", index + 2)
+            body = pattern[index + 1 : end]
+            negated = body[:1] in ("!", "^")
+            body = (body[1:] if negated else body).replace("\\", "\\\\").replace("[", "\\[")
+            parts.append(f"(?!/)[{'^' if negated else ''}{body}]")
+            index = end + 1
+        else:
+            parts.append(re.escape(char))
+            index += 1
+    return re.compile("".join(parts))
+
+
 def _glob_match(path: str, patterns: list[str]) -> bool:
-    """``**`` cruza diretórios; ``dir/**`` cobre tudo abaixo de ``dir``."""
-    for pattern in patterns:
-        if fnmatch.fnmatchcase(path, pattern) or fnmatch.fnmatchcase(path, pattern.replace("**/", "")):
-            return True
-        if pattern.endswith("/**") and path.startswith(pattern[:-2]):
-            return True
-    return False
+    """``**`` cruza diretórios; ``*`` não. ``dir/**`` cobre tudo abaixo de ``dir``."""
+    return any(_glob_regex(pattern).fullmatch(path) for pattern in patterns)
 
 
 def surface_hits(events: list[tuple[str, str]], cfg: Config) -> list[SurfaceHit]:

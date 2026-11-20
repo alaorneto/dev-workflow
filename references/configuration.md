@@ -122,7 +122,7 @@ replace = '"host": ">={new_major}.{new_minor}.0,<{new_next_minor}"'
 | Chave | Significado |
 |---|---|
 | `name` | Nome mostrado nos relatórios |
-| `globs` | Padrões de caminho; `**` cruza diretórios |
+| `globs` | Padrões de caminho, relativos à raiz do repositório e com `/`. `*`, `?` e `[...]` ficam dentro de um nível de diretório; `**/` vale zero ou mais diretórios e `dir/**` cobre tudo abaixo de `dir`. Exemplos: `scripts/*.py` não cobre `scripts/sub/x.py`; `**/*.md` cobre `README.md` e `docs/a/b.md`; `*.md` cobre só a raiz |
 | `on_add`, `on_modify`, `on_remove` | `none`, `patch`, `minor`, `major` ou `review`. Padrão: `review`, `review`, `major`. `review` não muda o nível; marca a mudança como "exige análise" |
 
 ### `[[versioning.floors]]`
@@ -131,7 +131,7 @@ Versões que o código declara como "disponível desde". A release nunca sai com
 
 | Chave | Significado |
 |---|---|
-| `globs` | Arquivos versionados a ler |
+| `globs` | Arquivos versionados a ler, com a mesma sintaxe das superfícies públicas |
 | `regex` | Expressão com um grupo de captura que contém a versão |
 
 ## `[changelog]`
