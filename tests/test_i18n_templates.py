@@ -217,3 +217,20 @@ class InitAndDoctorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CrossLanguageMarkersTest(unittest.TestCase):
+    """O epic, a dependência e o motivo da sobreposição também valem no outro idioma."""
+
+    def test_an_epic_written_in_english_is_read_in_a_portuguese_project(self):
+        from devflow.epics import parse_epic_items
+
+        plan = parse_epic_items("## Items\n- [ ] #3 x — depends on #2\n- [ ] #2 y — independent\n", "o/r")
+        self.assertEqual([(item.number, item.blocked_by) for item in plan.items], [(3, (2,)), (2, ())])
+
+    def test_the_override_reason_is_read_in_either_language(self):
+        from devflow.text import marked_value
+
+        self.assertEqual(marked_value("- Override reason: only the default", "Motivo da sobreposição"), "only the default")
+        self.assertEqual(marked_value("- Motivo da sobreposição: só o padrão", "Override reason"), "só o padrão")
+        self.assertEqual(marked_value("- Outro motivo: x", "Override reason"), "")

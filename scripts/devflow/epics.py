@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from . import i18n
 from .config import Config
 from .gh import run_gh
-from .text import ANY_ISSUE, ITEM_ISSUE, normalize_title
+from .text import ANY_ISSUE, ITEM_ISSUE, equivalent_titles, normalize_title, same_title
 
 SECTION_HEADING = re.compile(r"^#{2,3}\s+(?P<title>.+?)\s*$")
 CHECKBOX_ITEM = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+(?P<rest>.*)$")
@@ -36,7 +36,9 @@ class EpicSettings:
 
     @property
     def depends_on(self) -> re.Pattern[str]:
-        return re.compile(rf"\b{re.escape(self.depends_marker)}\b", re.IGNORECASE)
+        # O marcador do idioma do projeto e o equivalente nos outros: `depende de` e `depends on`.
+        markers = [self.depends_marker, *equivalent_titles(self.depends_marker)]
+        return re.compile(rf"\b(?:{'|'.join(re.escape(marker) for marker in markers)})\b", re.IGNORECASE)
 
 
 def _settings(items_section: str, depends_marker: str, epic_label: str) -> EpicSettings:
@@ -105,7 +107,7 @@ def parse_epic_items(body: str, repository: str) -> EpicPlan:
     for line in body.splitlines():
         heading = SECTION_HEADING.match(line)
         if heading:
-            in_section = normalize_title(heading.group("title")) == SETTINGS.items_section
+            in_section = same_title(heading.group("title"), SETTINGS.items_section)
             continue
         if not in_section:
             continue
@@ -211,7 +213,7 @@ def reconcile_checklist(body: str, closed: Mapping[int, bool], repository: str) 
         ending = line[len(text) :]
         heading = SECTION_HEADING.match(text)
         if heading:
-            in_section = normalize_title(heading.group("title")) == SETTINGS.items_section
+            in_section = same_title(heading.group("title"), SETTINGS.items_section)
         parts = CHECKBOX_PARTS.match(text) if in_section else None
         issue = ITEM_ISSUE.match(parts.group("rest").strip()) if parts else None
         if parts and issue and _same_repo(issue.group("repo"), repository):

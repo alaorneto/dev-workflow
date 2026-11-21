@@ -33,12 +33,12 @@ O idioma também decide o que o `bootstrap.py` gera ([instalação](installation
 - os formulários de issue, o modelo de PR e a configuração inicial vêm de `assets/locales/<idioma>/` (os de `pt-BR` continuam em `assets/`), com os rótulos iguais aos nomes de seção da tabela acima;
 - os workflows têm um modelo só; mudam os nomes de exibição (do workflow, dos jobs e dos passos), as descrições das entradas manuais e as mensagens dos passos. O nome do job de `pr-check.yml` é o check obrigatório da proteção de branch: `Verificação do PR` em `pt-BR`, `PR check` em `en`.
 
-**Nomes de seção equivalentes.** O check do PR e a leitura das issues aceitam o nome de uma seção padrão em qualquer idioma: um PR com `## Version` passa num projeto em `pt-BR`, e uma issue com `## Critérios de aceite` vale num projeto em `en`. A equivalência sai da posição de cada nome nos padrões dos idiomas (`issues.sections`, `pr.required_sections`, `issues.acceptance_section`, `pr.version_section`, `pr.tests_section`, `pr.docs_section`, `issues.items_section`), então vale para os nomes padrão; uma seção própria do projeto só casa com o próprio nome. Por isso trocar o idioma não quebra as issues e os PRs abertos antes da troca.
+**Nomes de seção equivalentes.** O check do PR e a leitura das issues aceitam o nome de uma seção padrão em qualquer idioma: um PR com `## Version` passa num projeto em `pt-BR`, e uma issue com `## Critérios de aceite` vale num projeto em `en`. A equivalência sai da posição de cada nome nos padrões dos idiomas (`issues.sections`, `pr.required_sections`, `issues.acceptance_section`, `pr.version_section`, `pr.tests_section`, `pr.docs_section`, `issues.items_section`, `issues.depends_marker`, `pr.override_reason_marker`), então vale para os nomes padrão; uma seção própria do projeto só casa com o próprio nome. Por isso trocar o idioma não quebra as issues e os PRs abertos antes da troca.
 
 Limites desta versão:
 
 - Com `en`, saem em inglês os padrões da tabela, o que o `bootstrap.py` gera e escreve e as mensagens que já estão no catálogo (`scripts/devflow/locales/`). As mensagens que ainda não estão nele saem em português.
-- A equivalência vale para os títulos de seção. O marcador do motivo de sobreposição (`pr.override_reason_marker`) e a seção de itens de um epic aberto antes da troca (`issues.items_section`, lida por `sync-checklist`) ainda são procurados só pelo nome do idioma configurado.
+- A equivalência também vale para o marcador do motivo de sobreposição (`Motivo da sobreposição` e `Override reason`), para a seção de itens de um epic (`Itens` e `Items`, lida por `sync-epic` e `sync-checklist`) e para o marcador de dependência (`depende de` e `depends on`): um epic aberto antes da troca continua sendo lido.
 - Os comentários dos workflows gerados e o `SKILL.md` e os documentos de `references/` continuam em português.
 
 ## `[repository]`

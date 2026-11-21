@@ -310,9 +310,10 @@ def localize_workflow(text: str, language: str, skill_dir: str) -> str:
             before, after = (_PROMPT_INDENT + value.replace("\n", indent) for value in (original, wanted))
             text = text.replace(before, after)
             continue
-        text = re.sub(
-            _DISPLAY_NAME.format(text=re.escape(original)), lambda match: match["lead"] + wanted, text
-        )
+        def swap(match: re.Match[str], wanted: str = wanted) -> str:
+            return match["lead"] + wanted
+
+        text = re.sub(_DISPLAY_NAME.format(text=re.escape(original)), swap, text)
         for form in _DISPLAY_QUOTED:
             text = text.replace(form.format(text=original), form.format(text=wanted))
     return text

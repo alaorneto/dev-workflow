@@ -48,6 +48,7 @@ def defaults(language: str) -> dict[str, Any]:
 # Nomes de seção dos padrões: o nome na mesma posição em cada idioma é o mesmo nome em outra língua.
 _SECTION_DEFAULTS = (
     ("issues", "items_section"),
+    ("issues", "depends_marker"),
     ("issues", "acceptance_section"),
     ("issues", "sections", "default"),
     ("issues", "sections", "bug"),
@@ -56,6 +57,8 @@ _SECTION_DEFAULTS = (
     ("pr", "version_section"),
     ("pr", "tests_section"),
     ("pr", "docs_section"),
+    # Não é seção, mas é lido do corpo do PR do mesmo jeito: `Motivo da sobreposição` e `Override reason`.
+    ("pr", "override_reason_marker"),
 )
 
 

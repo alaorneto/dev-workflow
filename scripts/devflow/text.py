@@ -222,6 +222,17 @@ def _equivalent_titles() -> dict[str, tuple[str, ...]]:
     return table
 
 
+def equivalent_titles(title: str) -> tuple[str, ...]:
+    """Os equivalentes normalizados de ``title`` nos outros idiomas (vazio se não há)."""
+    return _equivalent_titles().get(normalize_title(title), ())
+
+
+def same_title(found: str, wanted: str) -> bool:
+    """``found`` é o título ``wanted`` ou o equivalente dele em outro idioma."""
+    found, wanted = normalize_title(found), normalize_title(wanted)
+    return found == wanted or found in _equivalent_titles().get(wanted, ())
+
+
 def find_section(found: dict[str, str], title: str) -> str | None:
     """O texto da seção ``title`` num resultado de ``sections``.
 
@@ -247,10 +258,9 @@ def meaningful(text: str | None) -> str:
 
 def marked_value(text: str | None, marker: str) -> str:
     """Valor de uma linha ``Marcador: valor`` (por exemplo o motivo de uma sobreposição)."""
-    wanted = marker.casefold()
     for line in meaningful(text).splitlines():
         head, _, tail = line.lstrip("-* ").partition(":")
-        if head.strip().strip("*_").casefold() == wanted and tail.strip().strip("*_ "):
+        if same_title(head.strip().strip("*_"), marker) and tail.strip().strip("*_ "):
             return tail.strip().strip("*_ ")
     return ""
 
