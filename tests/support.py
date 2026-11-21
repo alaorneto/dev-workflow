@@ -195,6 +195,10 @@ class Sandbox:
         }
         self.update_state(lambda state: state["issues"].__setitem__(str(number), issue))
 
+    def head_of(self, number):
+        """O ``head.sha`` do PR simulado: o último commit que uma análise precisa ter visto."""
+        return self.state()["pulls"][str(number)]["head"]["sha"]
+
     def comment(self, number, body, *, login="alice", association="OWNER"):
         def mutate(state):
             comments = state["comments"].setdefault(str(number), [])
@@ -249,6 +253,7 @@ class Sandbox:
         else:
             owner = source.split("/")[0]
             self.git("merge", "-q", "--no-ff", branch, "-m", f"Merge pull request #{number} from {owner}/{branch}")
+        tip = self.git("rev-parse", branch)  # o `head.sha` que a API daria ao PR mesclado
         self.git("branch", "-q", "-D", branch)
         self.git("push", "-q", "origin", base)
         if body is None:
@@ -265,7 +270,7 @@ class Sandbox:
             "merge_commit_sha": self.git("rev-parse", "HEAD"),
             "labels": [{"name": name} for name in labels],
             "user": {"login": author},
-            "head": {"ref": branch, "repo": {"full_name": source}},
+            "head": {"ref": branch, "sha": tip, "repo": {"full_name": source}},
             "base": {"ref": base, "repo": {"full_name": REPOSITORY}},
             "commit_list": commit_list,
             "milestone": None,
@@ -277,6 +282,7 @@ class Sandbox:
         """PR ainda aberto: a branch existe, nada foi mesclado. Devolve o nome da branch."""
         branch = f"work/{number}"
         commit_list = self._commit_all(branch, commits)
+        tip = self.git("rev-parse", branch)
         self.git("switch", "-q", "main")
         issues = "\n".join(f"Closes #{n}" for n in closes) or "Closes #"
         pull = {
@@ -288,7 +294,7 @@ class Sandbox:
             "merged_at": None,
             "labels": [{"name": name} for name in labels],
             "user": {"login": "alice"},
-            "head": {"ref": branch, "repo": {"full_name": REPOSITORY}},
+            "head": {"ref": branch, "sha": tip, "repo": {"full_name": REPOSITORY}},
             "base": {"ref": "main", "repo": {"full_name": REPOSITORY}},
             "commit_list": commit_list,
             "milestone": None,

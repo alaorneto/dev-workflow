@@ -224,7 +224,7 @@ class RequestRecoveryTest(SandboxCase):
         self.assertIn("sem análise registrada: #31", failed.stdout)
         self.assertEqual(box.remote_tags(), ["v1.2.0"])
 
-        box.comment(31, ANALYSIS % 31)
+        box.comment(31, (ANALYSIS % 31).replace("abc1234", box.head_of(31)))
         box.merge_pr(32, "fix: handle the empty list", FIX)  # o push seguinte, de um PR sem label
         out = self.assertRan(box.release())
         self.assertIn("Versão pedida por: #31.", out)
@@ -253,7 +253,7 @@ class RequestRecoveryTest(SandboxCase):
         self.assertIn("aviso: Mudanças em superfícies públicas sem análise registrada: #43", out)
         self.assertIn("PR #43: o pedido `release` aguarda a análise de versão", out)
         self.assertNotIn("pode ser publicado", out)
-        box.comment(43, ANALYSIS % 43)
+        box.comment(43, (ANALYSIS % 43).replace("abc1234", box.head_of(43)))
         self.assertIn("pode ser publicado (v1.2.1)", self.assertRan(self._check(43, surface)))
         # sem label de versão o mesmo PR não pede nada, e o check não tem o que conferir
         box.update_state(lambda state: state["pulls"]["43"].update(labels=[]))

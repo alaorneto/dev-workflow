@@ -49,6 +49,7 @@ from devflow.text import (
 
 V = Version.parse
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+SKILL_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SemverTest(unittest.TestCase):
@@ -194,6 +195,47 @@ class TextTest(unittest.TestCase):
         self.assertEqual(slugify("Corrigir a origem pública do e-mail!"), "corrigir-a-origem-publica-do-e-mail")
         self.assertLessEqual(len(slugify("x" * 200)), 40)
         self.assertEqual(slugify("???"), "trabalho")
+
+
+class ConfigShapeTest(unittest.TestCase):
+    """Erro de digitação na configuração aparece na carga, com a chave e a correção provável."""
+
+    def assertRefused(self, data, *fragments):
+        with self.assertRaises(ConfigError) as raised:
+            Config(data)
+        for fragment in fragments:
+            self.assertIn(fragment, str(raised.exception))
+
+    def test_an_unknown_key_suggests_the_closest_one(self):
+        self.assertRefused({"pr": {"severity": {"titel": "off"}}}, "`pr.severity.titel`", "`title`")
+        self.assertRefused({"releese": {"mode": "direct"}}, "`releese`", "`release`")
+        self.assertRefused({"versioning": {"files": [{"path": "V", "serch": "{current}"}]}}, "files[0].serch")
+        self.assertRefused({"types": {"bug": {"prefixes": ["fix"], "levle": "patch"}}}, "types.bug.levle", "`level`")
+
+    def test_a_wrong_type_is_refused_with_the_key(self):
+        self.assertRefused({"pr": {"exempt_authors": "dependabot[bot]"}}, "`pr.exempt_authors`", "lista")
+        self.assertRefused({"versioning": {"enabled": "yes"}}, "`versioning.enabled`", "booleano")
+        self.assertRefused({"release": {"mark": ["comment", 3]}}, "`release.mark[1]`")
+        self.assertRefused({"labels": {"extra": []}}, "`labels.extra`", "tabela")
+
+    def test_a_search_without_a_current_marker_and_a_broken_regex_are_refused(self):
+        self.assertRefused({"versioning": {"files": [{"path": "V", "search": "version"}]}}, "search", "{current")
+        self.assertRefused({"versioning": {"files": [{"path": "V", "regex": "(", "replace": "x"}]}}, "regex")
+        Config({"versioning": {"files": [{"path": "V", "search": 'v = "{current_pep440}"'}]}})
+
+    def test_a_new_type_prefix_is_accepted_in_the_pr_title(self):
+        types = dict(Config().types)
+        types["hotfix"] = {"prefixes": ["hotfix"], "level": "patch", "section": "fixes"}
+        cfg = Config({"types": types})
+        self.assertRegex("hotfix: corrige o login", cfg.pr["title_pattern"])
+        self.assertRegex("feat(api)!: nova rota", cfg.pr["title_pattern"])
+        self.assertNotRegex("wip: algo", cfg.pr["title_pattern"])
+        self.assertEqual(Config().pr["title_pattern"], Config({"language": "pt-BR"}).pr["title_pattern"])
+
+    def test_the_configurations_shipped_with_the_skill_are_valid(self):
+        import tomllib
+
+        Config(tomllib.loads((SKILL_ROOT / ".github" / "dev-workflow.toml").read_text(encoding="utf-8")))
 
 
 class ConfigTest(unittest.TestCase):

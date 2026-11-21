@@ -947,8 +947,8 @@ def analysis_comment(data: dict[str, Any]) -> str:
     ]
     for entry in data["changes"]:
         key = f"#{entry['pr']}" if "pr" in entry else entry["commit"][:7]
-        evidence = "<br>".join(f"`{item}`" for item in entry["evidence"][:6])
-        summary = entry["summary"].replace("|", "/") + (f"<br>{evidence}" if evidence else "")
+        evidence = "<br>".join(f"`{' '.join(item.replace('`', "'").split())}`" for item in entry["evidence"][:6])
+        summary = " ".join(entry["summary"].replace("|", "/").split()) + (f"<br>{evidence}" if evidence else "")
         lines.append(f"| {key} | {entry['level']}{' ⚠' if entry['breaking'] else ''} | {summary} |")
     if data["notes"]:
         lines += ["", data["notes"]]
@@ -959,9 +959,17 @@ def analysis_comment(data: dict[str, Any]) -> str:
 def record_analysis(session: Session, args: argparse.Namespace) -> int:
     try:
         data = validate_analysis(read_analysis_file(args.file))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, ReleaseError) as exc:
         print(f"Análise inválida: {exc}", file=sys.stderr)
         return 1
+    if not data["head"] and session.github.enabled:
+        # Sem `head`, a análise não diria o que viu e não contaria: vale a ponta atual do PR.
+        head = str(((session.github.pull(args.pr) or {}).get("head") or {}).get("sha") or "")
+        if head:
+            data["head"] = head
+            print(f"A análise não diz o `head` analisado; registrada para a ponta atual do PR ({head[:7]}).")
+    if not data["head"]:
+        print("Aviso: a análise não diz o `head` analisado; ela não vai contar na release.", file=sys.stderr)
     if args.dry_run or not session.github.enabled:
         print(analysis_comment(data))
         return 0

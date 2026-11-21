@@ -300,10 +300,15 @@ class AgentAnalysisTest(SandboxCase):
     )
     COMMITS = [("fix: require the page size", {"api/client.py": "def fetch(size):\n    return size\n"})]
 
+    def _seen(self, number, level='"major"', box=None):
+        """A análise como o agente a grava: com o ``head`` que ela analisou, a ponta do PR."""
+        box = box or self.box
+        return self.ANALYSIS.replace("abc1234", box.head_of(number)).replace('"major"', level)
+
     def test_a_recorded_analysis_raises_the_level(self):
         box = self.box
         box.merge_pr(10, "fix: require the page size", self.COMMITS, labels=["release"])
-        box.comment(10, self.ANALYSIS)
+        box.comment(10, self._seen(10))
         out = self.assertRan(box.release())
         self.assertIn("fetch() passou a exigir um argumento → major", out)
         self.assertIn("Análise por agente: cobre todas as mudanças.", out)
@@ -312,7 +317,7 @@ class AgentAnalysisTest(SandboxCase):
     def test_an_analysis_from_someone_without_write_access_is_ignored(self):
         box = self.box
         box.merge_pr(10, "fix: require the page size", self.COMMITS, labels=["release"])
-        box.comment(10, self.ANALYSIS, login="mallory", association="NONE")
+        box.comment(10, self._seen(10), login="mallory", association="NONE")
         out = self.assertRan(box.release())
         self.assertIn("superfície pública tocada sem análise: `api/client.py`", out)
         self.assertIn("Análise por agente: ausente", out)
@@ -321,7 +326,7 @@ class AgentAnalysisTest(SandboxCase):
     def test_the_analysis_never_lowers_what_the_signals_say(self):
         box = self.box
         box.merge_pr(10, "feat: add the export command", FEAT, labels=["release"])
-        box.comment(10, self.ANALYSIS.replace('"major"', '"patch"'))
+        box.comment(10, self._seen(10, '"patch"'))
         self.assertRan(box.release())
         self.assertEqual(box.tags(), ["v1.2.0", "v1.3.0"])
 
@@ -333,7 +338,7 @@ class AgentAnalysisTest(SandboxCase):
         self.assertEqual(blocked.returncode, 1)
         self.assertIn("sem análise registrada: #10", blocked.stdout)
         self.assertEqual(box.tags(), ["v1.2.0"])
-        box.comment(10, self.ANALYSIS.replace('"major"', '"patch"'))
+        box.comment(10, self._seen(10, '"patch"', box))
         self.assertEqual(box.release().returncode, 0)
         self.assertEqual(box.tags(), ["v1.2.0", "v1.2.1"])
 
