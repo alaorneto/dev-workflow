@@ -376,6 +376,14 @@ MESSAGES: dict[str, str] = {
     "epics.sync.candidates": ", {count} candidatos sem issue",
     "epics.sync.failed": "ERRO {operation}: {error}",
     "epics.sync.problem": "divergência: {problem}",
+    "issues.labels.offline": (
+        "sync-labels precisa do GitHub, e ele está desligado (DEV_WORKFLOW_OFFLINE): nenhum label foi criado nem "
+        "atualizado. Rode de novo sem a variável."
+    ),
+    "issues.start.offline": (
+        "start precisa do GitHub para ler o tipo e o título da #{number}, e ele está desligado "
+        "(DEV_WORKFLOW_OFFLINE). Rode de novo sem a variável."
+    ),
     # (fim de issues)
     # === config.py, semver.py, gh.py, plan.py (#38): as chaves deste módulo ==============================
     # config.py: forma e tipos (a chave vem antes, em `dev-workflow.toml: `chave` ...`)
@@ -501,6 +509,7 @@ MESSAGES: dict[str, str] = {
     ),
     "plan.justification.analysis_none": "Análise por agente: ausente; o nível vem só dos sinais determinísticos.",
     "config.changelog.hide": "tem `{hidden}`, que não é id de `changelog.sections` ({accepted}).",
+    "gh.module.load": "{env}: não consegui carregar {path}.",
     # (fim de plan)
     # === release.py (#39): as chaves deste módulo =====================================================
     # --- execução: mensagens de quem opera -------------------------------------------------------
@@ -622,6 +631,11 @@ MESSAGES: dict[str, str] = {
     "release.analysis.comment.columns": "| Mudança | Nível | Motivo |",
     "release.analysis.comment.footer": (
         "<sub>A análise só eleva o nível calculado pelos sinais determinísticos; nunca o reduz.</sub>"
+    ),
+    "release.pr.offline": (
+        "Branch `{branch}` enviada com o commit de release de {tag}. O GitHub está desligado "
+        "(DEV_WORKFLOW_OFFLINE), então o PR de release não foi aberto; abra-o com "
+        "`gh pr create --base {base} --head {branch} --title \"{title}\"`, ou rode de novo com acesso ao GitHub."
     ),
     # (fim de release)
     # === bootstrap.py (#40): as chaves deste módulo =================================================

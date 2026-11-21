@@ -38,7 +38,7 @@ jobs:
         with:
           node-version: "24"
       - name: Testes do skill
-        run: python -m unittest discover -s __SKILL_DIR__/tests
+        run: python __SKILL_DIR__/tests/run.py --durations 10
 
   lint:
     name: Lint e tipos do skill

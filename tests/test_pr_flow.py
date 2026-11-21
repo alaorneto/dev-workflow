@@ -525,7 +525,7 @@ class BootstrapTest(unittest.TestCase):
         self.assertIn("path = \"VERSION\"\nsearch = '{current}'", config)
         self.assertIn("python3 ./scripts/release.py run", (root / ".github/workflows/release.yml").read_text("utf-8"))
         selftest = (root / ".github/workflows/dev-workflow-selftest.yml").read_text("utf-8")
-        self.assertIn("-s ./tests", selftest)
+        self.assertIn("python ./tests/run.py", selftest)
         self.assertIn('paths: ["**", ".github/dev-workflow.toml"]', selftest)
         doctor = box.run(script, "doctor", cwd=root)
         self.assertIn("0 erro(s)", doctor.stdout, doctor.stdout + doctor.stderr)

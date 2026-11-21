@@ -41,16 +41,21 @@ Para este skill, quebra de compatibilidade é tudo o que obriga um projeto a mex
 ## Como rodar a suíte
 
 ```bash
-py -3 -m unittest discover -s tests       # a suíte inteira: alguns minutos (testes ponta a ponta com git)
+py -3 tests/run.py                        # a suíte inteira em paralelo, um processo por núcleo (cerca de 3 minutos)
 py -3 scripts/bootstrap.py doctor         # este repositório conferido pelo próprio skill
 ```
+
+`tests/run.py` descobre os testes como o `unittest` e os distribui entre processos; os mais longos começam primeiro, pela duração da execução anterior (guardada em `tests/.durations.json`, fora do git). O resultado e o código de saída são os do `unittest`. `py -3 -m unittest discover -s tests` continua valendo, em série.
 
 Para iterar mais rápido, rode um arquivo ou um grupo de testes:
 
 ```bash
-py -3 -m unittest discover -s tests -p "test_units.py"
-py -3 -m unittest discover -s tests -p "test_pr_flow.py" -k Bootstrap
+py -3 tests/run.py -p "test_units.py"
+py -3 tests/run.py -p "test_pr_flow.py" -k Bootstrap
+py -3 tests/run.py -k Timeline -j 1 -v      # em série, uma linha por teste
 ```
+
+Nos testes, o `gh` simulado (`tests/fake_gh.py`) responde no próprio processo do script, pela variável `DEV_WORKFLOW_GH_MODULE`, e cada sandbox é copiado de um projeto inicial montado uma vez por processo: são as duas coisas que mais custavam tempo.
 
 Os testes do hook do Claude Code precisam do Node no PATH; sem ele, são pulados. Lint e tipos, nas versões que o CI usa:
 

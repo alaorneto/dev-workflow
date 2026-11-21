@@ -142,6 +142,60 @@ Rules around it:
 - **Pre-releases are requested the same way, with a channel label.** `release:alpha`, `release:beta` or `release:rc` on a PR publishes `X.Y.Z-<channel>.N` with everything accumulated, as a GitHub pre-release, without touching the changelog or commenting on issues. A request counts while its PR has not been in any version yet; the most mature request wins; a channel never goes back and the target of a cycle never goes down; `release` closes the cycle with the final version, which covers everything since the last final.
 - Publishing the accumulated changes without a `release` PR, promoting a pre-release without a new PR, hotfixes on a `release/*` maintenance line and undoing a wrong release are all supported; see [references/versioning.md](references/versioning.md).
 
+### Pre-releases step by step: alpha, beta, rc, final
+
+A pre-release is a test version of what has accumulated. `1.3.0-beta.1` sorts before `1.3.0` under SemVer, and package managers only hand it to whoever asks for it (`pip install --pre`, `npm install <pkg>@beta`). The channel says how far the version is from the final:
+
+| Channel | PR label | Use it for |
+|---|---|---|
+| `alpha` | `release:alpha` | Work in progress: parts may be missing and the interface can still change |
+| `beta` | `release:beta` | Features complete, being tested by users; only adjustments from here on |
+| `rc` | `release:rc` | Release candidate: ships as is unless a defect is found |
+| final | `release` | The version everybody gets; closes the cycle |
+
+**Once per project**
+
+1. Create the channel labels: `python3 S/github_issues.py sync-labels` (it creates `release:alpha`, `release:beta` and `release:rc` from `versioning.prerelease.channels`).
+2. Optional: point `release.dispatch_workflow` at your publishing workflow so each version is also published as a package. A pre-release should go to a channel (an npm dist-tag, PyPI with a pre-release version), never to `latest`: see [Publicar artefatos](references/configuration.md#publicar-artefatos-final-ou-pré-release).
+
+**Each cycle**
+
+1. **First test version.** Open the PR as usual and add the label `release:alpha`. The preview comment on the PR says what the merge will publish (`v1.3.0-alpha.1`). Merge it: the release workflow writes `1.3.0-alpha.1` to the version files (`1.3.0a1` in PEP 440 files), tags `v1.3.0-alpha.1` and creates a GitHub Release marked as pre-release. The changelog, the "published in" comments and the milestone wait for the final version.
+2. **Keep working.** PRs without a version label only accumulate. Another PR with `release:alpha` publishes `v1.3.0-alpha.2`, and its notes open with what is new since `alpha.1`.
+3. **Promote.** When the features are complete, a PR with `release:beta` publishes `v1.3.0-beta.1` (each channel counts from `.1`). Later, `release:rc` publishes `v1.3.0-rc.1`. To promote without a new PR, run the workflow by hand: `gh workflow run release.yml -f prerelease=rc` (add `-f dry_run=true` to see the plan first, or run `python3 S/release.py run --prerelease rc --dry-run` locally).
+4. **Ship the final.** A PR with `release` publishes `v1.3.0`. It covers everything since the last final version, so this is when the changelog section, the comments on every PR and issue and the `v1.3.0` milestone are written. Without a PR: `gh workflow run release.yml -f force=true`.
+5. **Check.** `python3 S/release.py status` shows the cycle in progress and what the next merge would publish; `gh run list --workflow release.yml --limit 1` shows the last run.
+
+A complete cycle, as the suite runs it (`tests/test_e2e_channels.py`):
+
+```mermaid
+flowchart LR
+    A["v1.2.0<br/>last final"] -->|"PR 31 feat<br/>release:alpha"| B["v1.3.0-alpha.1"]
+    B -->|"PR 32 fix<br/>no label: accumulates"| B
+    B -->|"PR 33 feat<br/>release:alpha"| C["v1.3.0-alpha.2"]
+    C -->|"PR 34 fix<br/>release:beta"| D["v1.3.0-beta.1"]
+    D -->|"PR 35 feat!<br/>release:beta"| E["v2.0.0-beta.1<br/>target changed"]
+    E -->|"PR 36 fix<br/>release:rc"| F["v2.0.0-rc.1"]
+    F -->|"PR 37 docs<br/>release"| G["v2.0.0<br/>final"]
+```
+
+| Step | PR | Label | Published | What else happens |
+|---|---|---|---|---|
+| 1 | 31 `feat` | `release:alpha` | `v1.3.0-alpha.1` | GitHub pre-release; no changelog, no comments |
+| 2 | 32 `fix` | — | nothing | accumulates for the next version |
+| 3 | 33 `feat` | `release:alpha` | `v1.3.0-alpha.2` | notes show what is new since `alpha.1` (PRs 32 and 33) |
+| 4 | 34 `fix` | `release:beta` | `v1.3.0-beta.1` | promotion: the count restarts |
+| 5 | 35 `feat!` | `release:beta` | `v2.0.0-beta.1` | a breaking change moved the target; the notes say so |
+| 6 | 36 `fix` | `release:rc` | `v2.0.0-rc.1` | release candidate |
+| 7 | 37 `docs` | `release` | `v2.0.0` | final: changelog, "published in v2.0.0" on PRs 31–37 and their issues, milestone |
+
+The rules behind it, in short (details in [references/versioning.md](references/versioning.md#canais-alpha-beta-e-rc)):
+
+- One version label per PR. A request counts while its PR has not shipped in any version; after a pre-release covers it, the label asks for nothing more.
+- The most mature request wins (`release`, then `rc`, `beta`, `alpha`), and **a channel never goes back**: after `beta.2`, a PR labelled `release:alpha` publishes `beta.3`.
+- **The target never goes down.** A breaking change during the cycle raises the target (`1.3.0-beta.1` → `2.0.0-beta.1`) and the count restarts there.
+- By hand, asking for an earlier channel than the cycle's, or repeating a channel with nothing new, is an error instead of a version that changes nothing.
+
 ### Closing with evidence
 
 - On merge, each referenced issue receives a comment with the commits, the tests and the documentation declared in the PR, plus any acceptance criteria still unchecked. Issues referenced with `Closes` are closed by GitHub.
@@ -243,7 +297,9 @@ The version is in `VERSION` and follows SemVer: a breaking change is anything th
 ## Developing
 
 ```bash
-python3 -m unittest discover -s tests          # the whole suite (a few minutes: end-to-end tests with git)
+python3 tests/run.py                          # the whole suite in parallel, one process per core (about 3 minutes)
+python3 tests/run.py -p "test_units.py"       # one file; -k <text> picks tests by name, -j 1 runs them in series
+python3 -m unittest discover -s tests         # the same suite with plain unittest, in series (much slower)
 python3 scripts/bootstrap.py doctor            # this repository checked by its own skill
 python3 -m pip install ruff==0.17.6 mypy==2.4.1  # the versions pinned in the self-test workflow
 python3 -m ruff check .                        # lint, configured in ruff.toml

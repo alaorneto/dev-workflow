@@ -4,11 +4,13 @@ Tudo aqui usa só a biblioteca padrão e ``git``. O repositório temporário fic
 com um remoto *bare* local, para que commit, push e tag aconteçam de verdade.
 """
 
+import atexit
 import contextlib
 import inspect
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -96,6 +98,48 @@ def function_suite(namespace):
     return suite
 
 
+# Um projeto inicial pronto por combinação de configuração, arquivos e tag, montado uma vez por
+# processo e copiado para cada teste.
+_TEMPLATES: dict[tuple, Path] = {}
+_TEMPLATE_ROOT: list[tempfile.TemporaryDirectory] = []
+
+
+def _template_dir() -> Path:
+    if not _TEMPLATE_ROOT:
+        root = tempfile.TemporaryDirectory(prefix="dev-workflow-templates-", ignore_cleanup_errors=True)
+        _TEMPLATE_ROOT.append(root)
+        atexit.register(root.cleanup)
+    path = Path(_TEMPLATE_ROOT[0].name) / str(len(_TEMPLATES))
+    (path / "work").mkdir(parents=True)
+    return path
+
+
+def _build(base: Path, config: str, files: dict, tag: str | None) -> None:
+    """O projeto inicial em ``base/work``, com remoto *bare* em ``base/remote.git``."""
+    work, remote = base / "work", base / "remote.git"
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=work, check=True, capture_output=True)
+
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    git("init", "-q", "-b", "main")
+    git("config", "user.name", "Dev")
+    git("config", "user.email", "dev@example.com")
+    git("config", "commit.gpgsign", "false")
+    git("config", "tag.gpgsign", "false")
+    git("config", "core.autocrlf", "false")
+    git("remote", "add", "origin", str(remote))
+    for name, content in {".github/dev-workflow.toml": config, **files}.items():
+        path = work / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content.encode("utf-8"))
+    git("add", "-A")
+    git("commit", "-q", "-m", "chore: start the project")
+    if tag:
+        git("tag", "-a", tag, "-m", tag)
+    git("push", "-q", "--tags", "origin", "main")
+
+
 class Sandbox:
     """Projeto de mentira com git de verdade e ``gh`` simulado."""
 
@@ -119,20 +163,18 @@ class Sandbox:
         )
         if mode:
             config += f'\n[release]\nmode = "{mode}"\n'
-        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
-        self.git("init", "-q", "-b", "main")
-        self.git("config", "user.name", "Dev")
-        self.git("config", "user.email", "dev@example.com")
-        self.git("config", "commit.gpgsign", "false")
-        self.git("config", "tag.gpgsign", "false")
-        self.git("config", "core.autocrlf", "false")
-        self.git("remote", "add", "origin", str(self.remote))
-        self.write({".github/dev-workflow.toml": config, **(BASE_FILES if files is None else files)})
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", "chore: start the project")
-        if tag:
-            self.git("tag", "-a", tag, "-m", tag)
-        self.git("push", "-q", "--tags", "origin", "main")
+        files = BASE_FILES if files is None else files
+        key = (config, tuple(sorted(files.items())), tag)
+        template = _TEMPLATES.get(key)
+        if template is None:
+            template = _template_dir()
+            _build(template, config, files, tag)
+            _TEMPLATES[key] = template
+        # Copiar o projeto pronto custa uma fração de refazê-lo: init, config, commit, tag e push.
+        self.work.rmdir()
+        shutil.copytree(template / "work", self.work, symlinks=True)
+        shutil.copytree(template / "remote.git", self.remote, symlinks=True)
+        self.git("config", "remote.origin.url", str(self.remote))
 
     def close(self):
         self._tmp.cleanup()
@@ -349,6 +391,11 @@ class Sandbox:
         )
         env.pop("DEV_WORKFLOW_OFFLINE", None)
         env.pop("DEV_WORKFLOW_CONFIG", None)
+        # O `gh` falso responde no processo do script, sem abrir um Python por chamada; um teste que
+        # troca o `gh` (DEV_WORKFLOW_GH) usa o comando dele, como na vida real.
+        env["DEV_WORKFLOW_GH_MODULE"] = str(FAKE_GH)
+        if "DEV_WORKFLOW_GH" in extra:
+            env.pop("DEV_WORKFLOW_GH_MODULE")
         env.update(extra)
         return env
 

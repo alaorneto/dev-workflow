@@ -176,7 +176,7 @@ Sai o que o fluxo gerou e não foi editado (pelo hash do manifesto ou, sem ele, 
 ## Conferir que funciona
 
 ```bash
-python3 -m unittest discover -s .claude/skills/dev-workflow/tests
+python3 .claude/skills/dev-workflow/tests/run.py
 ```
 
 A suíte cria repositórios git temporários fora do projeto e simula o GitHub; não toca o repositório nem a rede.

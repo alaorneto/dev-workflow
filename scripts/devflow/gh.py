@@ -7,6 +7,8 @@ testes: a variável ``DEV_WORKFLOW_GH`` aceita uma lista JSON com o comando que 
 
 from __future__ import annotations
 
+import importlib.util
+import io
 import json
 import os
 import re
@@ -15,11 +17,15 @@ import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from . import i18n
 
 GH_ENV = "DEV_WORKFLOW_GH"
+# Só os testes: arquivo Python cujo ``main(argv)`` faz o papel do ``gh`` no mesmo processo.
+GH_MODULE_ENV = "DEV_WORKFLOW_GH_MODULE"
+_GH_MODULES: dict[str, ModuleType] = {}
 OFFLINE_ENV = "DEV_WORKFLOW_OFFLINE"
 TIMEOUT_ENV = "DEV_WORKFLOW_TIMEOUT"
 RETRIES_ENV = "DEV_WORKFLOW_RETRIES"
@@ -156,7 +162,32 @@ def gh_command() -> list[str]:
     return command
 
 
+def _in_process(path: str, args: Sequence[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+    """Chama ``main(argv)`` de um ``gh`` simulado no próprio processo, como se fosse o executável."""
+    module = _GH_MODULES.get(path)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(f"_dev_workflow_gh_{len(_GH_MODULES)}", path)
+        if spec is None or spec.loader is None:
+            raise ValueError(i18n.t("gh.module.load", env=GH_MODULE_ENV, path=path))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _GH_MODULES[path] = module
+    out, err = io.StringIO(), io.StringIO()
+    saved = sys.stdin, sys.stdout, sys.stderr
+    sys.stdin, sys.stdout, sys.stderr = io.StringIO(stdin or ""), out, err
+    try:
+        code = module.main(list(args))
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+    finally:
+        sys.stdin, sys.stdout, sys.stderr = saved
+    return subprocess.CompletedProcess([path, *args], int(code or 0), out.getvalue(), err.getvalue())
+
+
 def run_gh(args: Sequence[str], *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    simulated = os.environ.get(GH_MODULE_ENV)
+    if simulated:  # só os testes: o `gh` simulado responde sem abrir um processo por chamada
+        return _in_process(simulated, args, stdin)
     return run([*gh_command(), *args], check=False, stdin=stdin)
 
 
