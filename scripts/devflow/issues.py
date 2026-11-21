@@ -32,11 +32,13 @@ from .text import (
     issue_from_branch,
     marked_value,
     meaningful,
+    normalize_title,
     parse_conventional,
     referenced_issues,
     section,
     sections,
     slugify,
+    unclosed_list_items,
 )
 
 IssueFetcher = Callable[[int], "dict[str, Any] | None"]
@@ -171,10 +173,16 @@ def check_pull_request(
     labels = label_names(pr)
 
     findings.errors.extend(validate_links(body, repository, fetch, cfg))
+    for number in unclosed_list_items(body, repository):
+        findings.warnings.append(
+            f"#{number} está numa lista de fechamento (`Closes #A, #{number}`), mas o GitHub só fecha a primeira "
+            f"issue da lista: repita a palavra-chave (`Closes #{number}`) ou use `Refs #{number}` se a entrega "
+            "é parcial."
+        )
 
     present = sections(body)
     for name in cfg.pr["required_sections"]:
-        text = present.get(name.casefold())
+        text = present.get(normalize_title(name))
         if text is None:
             findings.add(cfg.severity("sections"), f"Falta a seção `## {name}` no corpo do PR (use o modelo de PR).")
         elif not meaningful(text):
@@ -238,7 +246,9 @@ def check_pull_request(
             continue
         issue_body = str(issue.get("body") or "")
         missing = [
-            name for name in cfg.issue_sections(kind) if not meaningful(sections(issue_body).get(name.casefold()))
+            name
+            for name in cfg.issue_sections(kind)
+            if not meaningful(sections(issue_body).get(normalize_title(name)))
         ]
         if missing:
             findings.add(

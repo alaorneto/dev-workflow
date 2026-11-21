@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from .gh import run_gh
-from .text import ANY_ISSUE, ITEM_ISSUE
+from .text import ANY_ISSUE, ITEM_ISSUE, normalize_title
 
 SECTION_HEADING = re.compile(r"^#{2,3}\s+(?P<title>.+?)\s*$")
 CHECKBOX_ITEM = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+(?P<rest>.*)$")
@@ -39,7 +39,7 @@ SETTINGS = EpicSettings()
 
 def configure(*, items_section: str, depends_marker: str, epic_label: str) -> None:
     global SETTINGS
-    SETTINGS = EpicSettings(items_section.strip().lower(), depends_marker, epic_label)
+    SETTINGS = EpicSettings(normalize_title(items_section), depends_marker, epic_label)
 
 
 @dataclass(frozen=True)
@@ -94,7 +94,7 @@ def parse_epic_items(body: str, repository: str) -> EpicPlan:
     for line in body.splitlines():
         heading = SECTION_HEADING.match(line)
         if heading:
-            in_section = heading.group("title").strip().lower() == SETTINGS.items_section
+            in_section = normalize_title(heading.group("title")) == SETTINGS.items_section
             continue
         if not in_section:
             continue
@@ -200,7 +200,7 @@ def reconcile_checklist(body: str, closed: Mapping[int, bool], repository: str) 
         ending = line[len(text) :]
         heading = SECTION_HEADING.match(text)
         if heading:
-            in_section = heading.group("title").strip().lower() == SETTINGS.items_section
+            in_section = normalize_title(heading.group("title")) == SETTINGS.items_section
         parts = CHECKBOX_PARTS.match(text) if in_section else None
         issue = ITEM_ISSUE.match(parts.group("rest").strip()) if parts else None
         if parts and issue and _same_repo(issue.group("repo"), repository):

@@ -41,8 +41,10 @@ from devflow.text import (
     meaningful,
     parse_conventional,
     referenced_issues,
+    section,
     sections,
     slugify,
+    unclosed_list_items,
 )
 
 V = Version.parse
@@ -142,6 +144,34 @@ class TextTest(unittest.TestCase):
         self.assertEqual(list(found), ["resumo", "critérios de aceite"])
         self.assertIn("## falso", found["resumo"])
         self.assertEqual(checkboxes(found["critérios de aceite"]), [(True, "a"), (False, "b")])
+
+    def test_only_what_github_shows_is_a_reference(self):
+        self.assertEqual(referenced_issues("<!-- Closes #9 -->"), [])
+        self.assertEqual(referenced_issues("<!--\nCloses #9\n-->\nRefs #2"), [2])
+        self.assertEqual(referenced_issues("```\nCloses #9\n```\n~~~\nRefs #8\n~~~\nRefs #3"), [3])
+        self.assertEqual(referenced_issues("veja `Closes #9` e ``Refs #8``"), [])
+        self.assertEqual(referenced_issues("Closes #9", closing_only=True), [9])
+
+    def test_a_list_links_every_issue_but_github_only_closes_the_first(self):
+        self.assertEqual(referenced_issues("Refs #5, #6 and #7"), [5, 6, 7])
+        self.assertEqual(referenced_issues("Closes #5, #6"), [5, 6])
+        self.assertEqual(referenced_issues("Closes #5, #6", closing_only=True), [5])
+        self.assertEqual(unclosed_list_items("Closes #5, #6\nCloses #7"), [6])
+        self.assertEqual(unclosed_list_items("Closes #5, closes #6"), [])
+        self.assertEqual(unclosed_list_items("Refs #5, #6"), [])
+
+    def test_a_subsection_does_not_end_its_section(self):
+        found = sections("## Resumo\na\n### Detalhes\nb\n## Versão\nc")
+        self.assertEqual(found["resumo"], "a\n### Detalhes\nb")
+        self.assertEqual(found["detalhes"], "b")
+        self.assertEqual(found["versão"], "c")
+        self.assertEqual(sections("### Contexto\nx\n\n### Escopo\ny"), {"contexto": "x", "escopo": "y"})
+
+    def test_a_commented_heading_is_not_a_section_and_titles_are_normalized(self):
+        found = sections("## Resumo\na\n<!--\n## Versão\n-->\nb")
+        self.assertNotIn("versão", found)
+        self.assertIn("b", found["resumo"])
+        self.assertEqual(section("##   Testes  executados:\nok", "testes executados"), "ok")
 
     def test_template_leftovers_are_not_content(self):
         self.assertEqual(meaningful("<!-- dica -->\n- \n-\n- [ ] \n_No response_\n"), "")

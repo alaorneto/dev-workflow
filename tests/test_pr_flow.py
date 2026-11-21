@@ -110,6 +110,21 @@ class CheckPullRequestTest(unittest.TestCase):
         self.assertIn("não referencia issue", _check(_pr(body=body)).errors[0])
         self.assertIn("exatamente um label de tipo", _check(_pr(), _fetch(n1={"labels": []})).errors[0])
 
+    def test_a_commented_or_quoted_reference_does_not_link_the_pr(self):
+        body = PR_BODY.format(issues="<!-- Closes #1 -->\n```\nCloses #1\n```", summary="x", version="Nenhum")
+        self.assertIn("não referencia issue", _check(_pr(body=body)).errors[0])
+
+    def test_a_closing_list_warns_that_github_closes_only_the_first(self):
+        body = PR_BODY.format(issues="Closes #1, #2", summary="x", version="Funcionalidade nova")
+        findings = _check(_pr(body=body), _fetch(_2={"labels": [{"name": "feature"}], "body": ISSUE_BODY}))
+        self.assertEqual(findings.errors, [])
+        self.assertEqual(len(findings.warnings), 1)
+        self.assertIn("#2", findings.warnings[0])
+
+    def test_a_subsection_inside_the_summary_keeps_the_summary_whole(self):
+        body = PR_BODY.format(issues="Closes #1", summary="x\n\n### Detalhes\n- y", version="Funcionalidade nova")
+        self.assertEqual(_check(_pr(body=body)).errors, [])
+
     def test_the_title_must_be_a_conventional_commit(self):
         self.assertIn("Conventional Commits", _check(_pr(title="Add export")).errors[0])
 

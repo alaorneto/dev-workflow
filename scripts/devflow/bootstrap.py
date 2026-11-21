@@ -29,7 +29,7 @@ from .gh import Git, GitHub, current_repository, offline, run_gh, utf8_streams
 from .plan import Repo
 from .release import check_version_files
 from .semver import Version
-from .text import sections
+from .text import normalize_title, sections
 
 SKILL = Path(__file__).resolve().parents[2]
 ASSETS = SKILL / "assets"
@@ -453,7 +453,7 @@ def doctor(_args: argparse.Namespace) -> int:
     template = root / ".github/pull_request_template.md"
     if template.is_file():
         present = sections(template.read_text(encoding="utf-8"))
-        missing = [name for name in cfg.pr["required_sections"] if name.casefold() not in present]
+        missing = [name for name in cfg.pr["required_sections"] if normalize_title(name) not in present]
         if missing:
             report.error(f"o modelo de PR não tem as seções exigidas em pr.required_sections: {', '.join(missing)}")
 

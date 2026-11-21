@@ -9,6 +9,8 @@ from dataclasses import dataclass
 _ISSUE = r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>\d+)"
 _CLOSING = r"close[sd]?|fix(?:e[sd])?|resolve[sd]?"
 ISSUE_REFERENCE = re.compile(rf"\b(?P<keyword>{_CLOSING}|refs?|part of)\b\s*:?\s+{_ISSUE}", re.IGNORECASE)
+# Continuação de uma lista depois da primeira referência: ``Refs #5, #6 and #7``.
+LIST_TAIL = re.compile(rf"\s*(?:,\s*(?:and\s+)?|\s+and\s+){_ISSUE}", re.IGNORECASE)
 CLOSING_KEYWORD = re.compile(rf"^(?:{_CLOSING})$", re.IGNORECASE)
 ANY_ISSUE = re.compile(_ISSUE)
 ITEM_ISSUE = re.compile(rf"^{_ISSUE}\b")
@@ -20,8 +22,10 @@ REVERTS = re.compile(r"This reverts commit ([0-9a-f]{7,40})")
 SCISSORS = re.compile(r"^# -+ >8 -+$", re.MULTILINE)
 CONVENTIONAL = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)]*)\))?(?P<bang>!)?: (?P<description>.+)$")
 BREAKING_FOOTER = re.compile(r"^BREAKING[ -]CHANGE:\s*(?P<text>.+)$", re.MULTILINE)
-HEADING = re.compile(r"^#{2,3}\s+(?P<title>.+?)\s*#*\s*$")
-HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+HEADING = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
+HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
+INLINE_CODE = re.compile(r"(?P<ticks>`+)(?!`).*?(?<!`)(?P=ticks)(?!`)")
+FENCE = re.compile(r"^\s{0,3}(?P<fence>`{3,}|~{3,})")
 CHECKBOX = re.compile(r"^\s*[-*]\s+\[(?P<mark>[ xX])\]\s+(?P<label>.*)$")
 _PLACEHOLDER_LINE = re.compile(r"^[\s>*_`-]*(?:\[[ xX]?\])?[\s>*_`-]*$")
 NO_RESPONSE = "_No response_"  # o que os formulários de issue do GitHub gravam em campos vazios
@@ -39,24 +43,74 @@ def clean_message(raw: str, comment_char: str = "#") -> str:
     return "\n".join(line for line in raw.splitlines() if not line.startswith(comment_char)).strip()
 
 
+def visible_text(text: str) -> str:
+    """O texto que o GitHub mostra e vincula: sem comentários HTML, blocos de código e código em linha.
+
+    Cada trecho removido vira espaço (ou quebra de linha, num bloco), para duas palavras vizinhas não se
+    juntarem numa referência que não existe.
+    """
+    without_comments = HTML_COMMENT.sub(lambda match: "\n" * match.group(0).count("\n") or " ", text or "")
+    lines: list[str] = []
+    fence: str | None = None
+    for line in without_comments.splitlines():
+        opened = FENCE.match(line)
+        if fence is None and opened:
+            fence = opened.group("fence")
+            lines.append("")
+            continue
+        if fence is not None:
+            if line.strip().startswith(fence[0] * len(fence)) and not line.strip().strip(fence[0]):
+                fence = None
+            lines.append("")
+            continue
+        lines.append(INLINE_CODE.sub(" ", line))
+    return "\n".join(lines)
+
+
+def _references(text: str, repository: str | None):
+    """``(palavra-chave, número, primeira_da_lista)`` de cada referência visível do repositório."""
+    visible = visible_text(text)
+    for match in ISSUE_REFERENCE.finditer(visible):
+        keyword = match.group("keyword")
+        refs = [(match.group("repo"), match.group("number"), True)]
+        end = match.end()
+        while tail := LIST_TAIL.match(visible, end):
+            refs.append((tail.group("repo"), tail.group("number"), False))
+            end = tail.end()
+        for repo, number, first in refs:
+            if same_repo(repo, repository):
+                yield keyword, int(number), first
+
+
 def referenced_issues(text: str, repository: str | None = None, *, closing_only: bool = False) -> list[int]:
     """Números das issues citadas com palavra-chave; ignora outros repositórios.
 
+    Só conta o que o GitHub mostra: referência em comentário HTML ou em bloco de código não vale. Uma
+    lista (``Refs #5, #6``) vincula todas, mas o GitHub só fecha a primeira de ``Closes #5, #6``.
     O sufixo ``(#N)`` do título de um squash conta como referência, mas nunca como fechamento.
     """
     numbers: list[int] = []
-    for match in ISSUE_REFERENCE.finditer(text):
-        if not same_repo(match.group("repo"), repository):
+    for keyword, number, first in _references(text, repository):
+        if closing_only and not (first and CLOSING_KEYWORD.match(keyword)):
             continue
-        if closing_only and not CLOSING_KEYWORD.match(match.group("keyword")):
-            continue
-        numbers.append(int(match.group("number")))
+        numbers.append(number)
     if not closing_only:
         first_line = text.strip().splitlines()[0] if text.strip() else ""
         suffix = SQUASH_SUFFIX.search(first_line)
         if suffix:
             numbers.append(int(suffix.group("number")))
     return list(dict.fromkeys(numbers))
+
+
+def unclosed_list_items(text: str, repository: str | None = None) -> list[int]:
+    """Issues de uma lista de fechamento que o GitHub não fecha: o ``#6`` de ``Closes #5, #6``."""
+    closing = set(referenced_issues(text, repository, closing_only=True))
+    found = (
+        number
+        for keyword, number, first in _references(text, repository)
+        if not first and CLOSING_KEYWORD.match(keyword) and number not in closing
+    )
+    return list(dict.fromkeys(found))
 
 
 def is_autogenerated(message: str) -> bool:
@@ -92,24 +146,56 @@ def normalize_title(title: str) -> str:
     return re.sub(r"\s+", " ", title).strip().strip(":").casefold()
 
 
+def _comment_offsets(body: str) -> list[tuple[int, int]]:
+    return [match.span() for match in HTML_COMMENT.finditer(body)]
+
+
 def sections(body: str) -> dict[str, str]:
-    """``{título normalizado: texto}`` para cada ``##`` ou ``###`` (os formulários do GitHub usam ``###``)."""
+    """``{título normalizado: texto}`` para cada título de seção.
+
+    Os formulários de issue do GitHub gravam ``###``; os modelos de PR usam ``##``. Uma seção vai até o
+    próximo título do mesmo nível ou de nível acima, então um ``### Detalhes`` dentro de ``## Resumo``
+    continua fazendo parte do resumo (e também pode ser lido sozinho). Títulos em bloco de código ou em
+    comentário HTML não contam. Vale a primeira seção de cada título.
+    """
+    body = body or ""
+    comments = _comment_offsets(body)
     result: dict[str, str] = {}
-    current: str | None = None
-    lines: list[str] = []
-    in_fence = False
-    for line in (body or "").splitlines():
-        if line.lstrip().startswith(("```", "~~~")):
-            in_fence = not in_fence
-        heading = None if in_fence else HEADING.match(line)
+    open_sections: list[tuple[int, str, list[str], bool]] = []
+    fence: str | None = None
+    offset = 0
+
+    def close(level: int) -> None:
+        while open_sections and open_sections[-1][0] >= level:
+            _, title, lines, owner = open_sections.pop()
+            if owner:
+                result[title] = "\n".join(lines).strip()
+
+    for line in body.splitlines(keepends=True):
+        start, offset = offset, offset + len(line)
+        line = line.rstrip("\r\n")
+        opened = FENCE.match(line)
+        heading = None
+        if fence is None and opened:
+            fence = opened.group("fence")
+        elif fence is not None:
+            if line.strip().startswith(fence[0] * len(fence)) and not line.strip().strip(fence[0]):
+                fence = None
+        elif not any(begin <= start < end for begin, end in comments):
+            heading = HEADING.match(line)
         if heading:
-            if current is not None:
-                result.setdefault(current, "\n".join(lines).strip())
-            current, lines = normalize_title(heading.group("title")), []
-        elif current is not None:
+            level = len(heading.group("level"))
+            close(level)
+            for _, _, lines, _ in open_sections:
+                lines.append(line)
+            title = normalize_title(heading.group("title"))
+            owner = title not in result
+            result.setdefault(title, "")  # reserva o lugar: a ordem é a do documento
+            open_sections.append((level, title, [], owner))
+            continue
+        for _, _, lines, _ in open_sections:
             lines.append(line)
-    if current is not None:
-        result.setdefault(current, "\n".join(lines).strip())
+    close(0)
     return result
 
 

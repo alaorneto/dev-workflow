@@ -148,6 +148,10 @@ Closes #<N>
 - Motivo da sobreposição: <por que o nível calculado não vale aqui>
 ~~~
 
+**O que conta como referência.** Só o que o GitHub mostra e vincula: `Closes #N`, `Fixes #N`, `Resolves #N` (e variações), `Refs #N` ou `Part of #N` no texto visível. Uma referência dentro de comentário HTML (`<!-- ... -->`), de bloco de código ou de código em linha não conta, nem no check do PR, nem no comentário de evidências, nem no plano de versão. Uma lista vincula todas as issues (`Refs #5, #6 and #7`), mas o GitHub só fecha a primeira de `Closes #5, #6`; o check avisa e pede `Closes #5, closes #6`. Palavras-chave em português não são reconhecidas pelo GitHub.
+
+**Seções.** O título é comparado sem diferença de maiúsculas, espaços repetidos e dois-pontos no fim. Uma seção vai até o próximo título do mesmo nível ou acima: um `### Detalhes` dentro de `## Resumo` continua no resumo. Título dentro de comentário HTML ou de bloco de código não abre seção.
+
 ## Comentário de mudança de escopo
 
 Na issue, no momento em que o escopo muda, depois de atualizar o corpo dela:
