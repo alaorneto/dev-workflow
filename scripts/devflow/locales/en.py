@@ -515,6 +515,132 @@ MESSAGES: dict[str, str] = {
     "config.changelog.hide": "has `{hidden}`, which is not an id of `changelog.sections` ({accepted}).",
     # (fim de plan)
     # === release.py (#39): as chaves deste módulo =====================================================
+    # --- run: messages for whoever operates it ---------------------------------------------------
+    "release.error": "ERROR: {text}",
+    "release.warning": "warning: {text}",
+    "release.push.refused": (
+        "the push of the release commit to `{branch}` was refused by GitHub (branch protection or token "
+        "permission), not because the branch moved: {detail}\n"
+        "Two ways out: `release.mode = \"pull-request\"` in the configuration, so the release reaches the branch "
+        "through a PR; or a `RELEASE_TOKEN` secret allowed to write to it (for example, from someone who can "
+        "bypass the protection). Nothing was published; run again after adjusting."
+    ),
+    "release.push.moved": "The remote branch moved during the release; recalculating.",
+    "release.unstable": "the release did not settle; run again and check the state of the branch.",
+    "release.analysis.missing": "the analysis file `{path}` does not exist.",
+    "release.analysis.encoding": "the analysis file `{path}` is not in UTF-8.",
+    "release.analysis.unreadable": "could not read the analysis file `{path}`: {error}.",
+    "release.analysis.invalid": "the analysis file `{path}` is not valid JSON: {error}.",
+    "release.analysis.refused": "Invalid analysis: {error}",
+    "release.analysis.head_filled": (
+        "The analysis does not say which `head` it analyzed; recorded for the current tip of the PR ({sha})."
+    ),
+    "release.analysis.no_head": (
+        "Warning: the analysis does not say which `head` it analyzed; it will not count in the release."
+    ),
+    "release.analysis.recorded": "Analysis recorded on PR #{pr}: level {level}, {count} change(s).",
+    "release.files.count": (
+        "{path}: expected {expected} occurrence(s) of `{needle}`, found {found}. "
+        "The file drifted from the current version or the pattern in `versioning.files` is wrong."
+    ),
+    "release.files.count_regex": "{path}: expected {expected} occurrence(s) of /{regex}/, found {found}.",
+    "release.files.encoding": "{path}: not in UTF-8; convert the file (the version is written in UTF-8).",
+    "release.files.unreadable": "{path}: could not read it ({error}).",
+    "release.files.drift": "{path}: the content does not match version {version}.",
+    "release.forged.merge": (
+        "it came through merge {sha}, which is not the release PR's (`{branch}` of this repository)"
+    ),
+    "release.forged.not_pr": "it came through merge {sha}, which is not a PR's",
+    "release.forged.other_pr": (
+        "it came through PR #{number}, which is not the release PR (`{branch}` of this repository)"
+    ),
+    "release.forged.ignored": "Release commit {sha} ({tag}) ignored: {reason}. No version comes out of it.",
+    "release.mark.failed": "could not mark #{number}: {error}",
+    "release.tag.created": "Tag {tag} created on {sha}.",
+    "release.github.created": "GitHub Release {tag} created.",
+    "release.dispatch.done": "Workflow {workflow} dispatched for {tag}.",
+    "release.dispatch.failed": "could not dispatch {workflow}: {error}",
+    "release.pr.updated": "Release PR #{number} updated to {tag}.",
+    "release.pr.opened": "Release PR #{number} opened for {tag}.",
+    "release.reconcile": "Tag {tag} has no GitHub Release; finishing the publication.",
+    "release.disabled": "Versioning is off in dev-workflow.toml (`versioning.enabled = false`).",
+    "release.branch.not_release": "Branch `{branch}` does not publish versions (see `repository.release_branches`).",
+    "release.branch.release_pr": (
+        "Branch `{branch}` is the release PR's (`release.pr_branch`): the version comes out when that PR is "
+        "merged, not from here."
+    ),
+    "release.override.no_reason": "(no reason given)",
+    "release.override.manual": "manual run",
+    "release.prepared.publishing": "Release commit of {tag} has no tag yet; publishing.",
+    "release.preview.no_tag": "No reachable version tag: the preview starts after `release.py baseline`.",
+    "release.preview.comment_failed": "could not comment the preview on the PR: {error}",
+    "release.baseline.exists": "The repository already has version tags; the base tag is not needed.",
+    "release.baseline.message": (
+        "Baseline of the automatic versioning: what came before this tag is version {version}."
+    ),
+    "release.baseline.created": "Base tag {tag} created on {sha}.",
+    "release.baseline.pushed": "Tag pushed to the remote.",
+    "release.check.no_tree": "--tree {tree} is not a directory.",
+    "release.check.pr_tip": ", the highest reachable from the PR tip",
+    "release.check.initial": "versioning.initial_version (no tag yet)",
+    "release.check.prepared": (
+        "Release PR ({tag}): {count} file entry(ies) consistent with version {version}, which it publishes."
+    ),
+    "release.check.ok": "{count} file entry(ies) consistent with version {version} ({origin}).",
+    "release.bump.none": "No file changed.",
+    "release.level.invalid": "Invalid level: {level}.",
+    "release.cli.description": "Semantic versioning of the project.",
+    "release.cli.pr": "include an open PR as if it were merged",
+    "release.cli.base_ref": "with --pr: the target branch (default: origin/<default branch>)",
+    "release.cli.head_ref": "with --pr: the tip of the PR",
+    "release.cli.tree": "check the files of another tree (the PR checkout) with this tree's configuration",
+    "release.cli.check": "do not comment: fail if this PR's version request cannot be published",
+    "release.cli.force": "publish what accumulated even without a labelled PR",
+    "release.cli.prerelease": "pre-release channel, for example rc; implies --force",
+    # --- plan report (`release.py plan`, `run`) ------------------------------------------------
+    "release.report.nothing": "Nothing accumulated since {base}.",
+    "release.report.next.title": "### Next version: **{tag}** ({level}) — {state}",
+    "release.report.next.will": "will be published",
+    "release.report.next.would": "would be published (no PR has asked for a version yet)",
+    "release.report.requested_by": "Version requested by: {changes}.",
+    "release.report.problems": "**Problems that block the release**",
+    # --- notes, release PR and markings ----------------------------------------------------------
+    "release.notes.why": "### Why this number",
+    "release.notes.more": "_… and {omitted} more entry(ies): the full list is {full_list}._",
+    "release.notes.cut": "_… text cut at GitHub's limit._",
+    "release.notes.full.link": "in [{path}]({url})",
+    "release.notes.full.file": "in `{path}`",
+    "release.notes.full.tag": "in the message of the annotated tag",
+    "release.notes.table": (
+        "_The table with the signals of each of the {count} change(s) does not fit here: it is "
+        "complete in the message of the release commit and in that of the annotated tag._"
+    ),
+    "release.notes.commit_record": "### Release commit record",
+    "release.marked.pr": "🚀 This PR was published in version [{tag}]({url}).",
+    "release.marked.issue": "🚀 Delivered in version [{tag}]({url}).",
+    "release.pr.header": (
+        "Release PR generated by the automation. When it is merged, the `{tag}` tag and the GitHub Release "
+        "are created. Do not edit it: it is rebuilt on every push to the target branch."
+    ),
+    "release.preview.final.title": "### Version preview: when merged, this PR publishes **{tag}** ({level})",
+    "release.preview.final.body": "This version includes this PR and {others} change(s) accumulated since {base}.",
+    "release.preview.none.title": "### Version preview: this PR publishes no version",
+    "release.preview.none.body": (
+        "Without the `{release}` label, it waits with {others} pending change(s) and goes into the next "
+        "version. With `{release}`, merging would publish **{tag}** ({level})."
+    ),
+    "release.preview.footer": "<sub>Updated on every push and every label change.</sub>",
+    "release.preview.table_note": (
+        "_The table with the signals of each of the {count} change(s) does not fit in a comment: "
+        "it is in the run summary of this check and in `release.py plan`._"
+    ),
+    "release.analysis.comment.title": "### Version analysis",
+    "release.analysis.comment.range": "Range `{base}..{head}` · proposed level: **{level}**",
+    "release.analysis.comment.start": "start",
+    "release.analysis.comment.columns": "| Change | Level | Reason |",
+    "release.analysis.comment.footer": (
+        "<sub>The analysis only raises the level computed from the deterministic signals; it never lowers it.</sub>"
+    ),
     # (fim de release)
     # === bootstrap.py (#40): as chaves deste módulo =================================================
     # (fim de bootstrap)

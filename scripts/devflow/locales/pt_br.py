@@ -503,6 +503,126 @@ MESSAGES: dict[str, str] = {
     "config.changelog.hide": "tem `{hidden}`, que não é id de `changelog.sections` ({accepted}).",
     # (fim de plan)
     # === release.py (#39): as chaves deste módulo =====================================================
+    # --- execução: mensagens de quem opera -------------------------------------------------------
+    "release.error": "ERRO: {text}",
+    "release.warning": "aviso: {text}",
+    "release.push.refused": (
+        "o push do commit de release para `{branch}` foi recusado pelo GitHub (proteção de branch ou permissão "
+        "do token), não porque a branch andou: {detail}\n"
+        "Duas saídas: `release.mode = \"pull-request\"` na configuração, para a release chegar à branch por um PR; "
+        "ou um segredo `RELEASE_TOKEN` com permissão de escrever nela (por exemplo, de quem pode passar pela "
+        "proteção). Nada foi publicado; rode de novo depois de ajustar."
+    ),
+    "release.push.moved": "A branch remota avançou durante a release; recalculando.",
+    "release.unstable": "a release não estabilizou; rode de novo e confira o estado da branch.",
+    "release.analysis.missing": "o arquivo de análise `{path}` não existe.",
+    "release.analysis.encoding": "o arquivo de análise `{path}` não está em UTF-8.",
+    "release.analysis.unreadable": "não consegui ler o arquivo de análise `{path}`: {error}.",
+    "release.analysis.invalid": "o arquivo de análise `{path}` não é JSON válido: {error}.",
+    "release.analysis.refused": "Análise inválida: {error}",
+    "release.analysis.head_filled": (
+        "A análise não diz o `head` analisado; registrada para a ponta atual do PR ({sha})."
+    ),
+    "release.analysis.no_head": "Aviso: a análise não diz o `head` analisado; ela não vai contar na release.",
+    "release.analysis.recorded": "Análise gravada no PR #{pr}: nível {level}, {count} mudança(s).",
+    "release.files.count": (
+        "{path}: esperava {expected} ocorrência(s) de `{needle}`, encontrei {found}. "
+        "O arquivo divergiu da versão corrente ou o padrão em `versioning.files` está errado."
+    ),
+    "release.files.count_regex": "{path}: esperava {expected} ocorrência(s) de /{regex}/, encontrei {found}.",
+    "release.files.encoding": "{path}: não está em UTF-8; converta o arquivo (a versão é escrita em UTF-8).",
+    "release.files.unreadable": "{path}: não consegui ler ({error}).",
+    "release.files.drift": "{path}: o conteúdo não corresponde à versão {version}.",
+    "release.forged.merge": "chegou pelo merge {sha}, que não é do PR de release (`{branch}` deste repositório)",
+    "release.forged.not_pr": "chegou pelo merge {sha}, que não é de um PR",
+    "release.forged.other_pr": "chegou pelo PR #{number}, que não é o PR de release (`{branch}` deste repositório)",
+    "release.forged.ignored": "Commit de release {sha} ({tag}) ignorado: {reason}. Nenhuma versão sai dele.",
+    "release.mark.failed": "não consegui marcar #{number}: {error}",
+    "release.tag.created": "Tag {tag} criada em {sha}.",
+    "release.github.created": "GitHub Release {tag} criada.",
+    "release.dispatch.done": "Workflow {workflow} disparado para {tag}.",
+    "release.dispatch.failed": "não consegui disparar {workflow}: {error}",
+    "release.pr.updated": "PR de release #{number} atualizado para {tag}.",
+    "release.pr.opened": "PR de release #{number} aberto para {tag}.",
+    "release.reconcile": "A tag {tag} não tem GitHub Release; concluindo a publicação.",
+    "release.disabled": "Versionamento desligado em dev-workflow.toml (`versioning.enabled = false`).",
+    "release.branch.not_release": "A branch `{branch}` não publica versões (veja `repository.release_branches`).",
+    "release.branch.release_pr": (
+        "A branch `{branch}` é a do PR de release (`release.pr_branch`): a versão sai quando esse PR é "
+        "mesclado, não daqui."
+    ),
+    "release.override.no_reason": "(motivo não informado)",
+    "release.override.manual": "execução manual",
+    "release.prepared.publishing": "Commit de release de {tag} sem tag; publicando.",
+    "release.preview.no_tag": "Sem tag de versão alcançável: a prévia começa depois de `release.py baseline`.",
+    "release.preview.comment_failed": "não consegui comentar a prévia no PR: {error}",
+    "release.baseline.exists": "O repositório já tem tags de versão; a tag de base não é necessária.",
+    "release.baseline.message": (
+        "Linha de base do versionamento automático: o que veio antes desta tag é a versão {version}."
+    ),
+    "release.baseline.created": "Tag de base {tag} criada em {sha}.",
+    "release.baseline.pushed": "Tag enviada ao remoto.",
+    "release.check.no_tree": "--tree {tree} não é um diretório.",
+    "release.check.pr_tip": ", a maior alcançável da ponta do PR",
+    "release.check.initial": "versioning.initial_version (ainda não há tag)",
+    "release.check.prepared": (
+        "PR de release ({tag}): {count} entrada(s) de arquivo coerentes com a versão {version}, que ele publica."
+    ),
+    "release.check.ok": "{count} entrada(s) de arquivo coerentes com a versão {version} ({origin}).",
+    "release.bump.none": "Nenhum arquivo mudou.",
+    "release.level.invalid": "Nível inválido: {level}.",
+    "release.cli.description": "Versionamento semântico do projeto.",
+    "release.cli.pr": "inclui um PR aberto como se estivesse mesclado",
+    "release.cli.base_ref": "com --pr: a branch de destino (padrão: origin/<branch padrão>)",
+    "release.cli.head_ref": "com --pr: a ponta do PR",
+    "release.cli.tree": "confere os arquivos de outra árvore (checkout do PR), com a configuração desta",
+    "release.cli.check": "não comenta: falha se o pedido de versão deste PR não pode ser publicado",
+    "release.cli.force": "publica o acumulado mesmo sem PR marcado",
+    "release.cli.prerelease": "canal de pré-release, por exemplo rc; implica --force",
+    # --- relatório do plano (`release.py plan`, `run`) -----------------------------------------
+    "release.report.nothing": "Nada acumulado desde {base}.",
+    "release.report.next.title": "### Próxima versão: **{tag}** ({level}) — {state}",
+    "release.report.next.will": "será publicada",
+    "release.report.next.would": "seria publicada (nenhum PR pediu versão ainda)",
+    "release.report.requested_by": "Versão pedida por: {changes}.",
+    "release.report.problems": "**Problemas que impedem a release**",
+    # --- notas, PR de release e marcações --------------------------------------------------------
+    "release.notes.why": "### Por que este número",
+    "release.notes.more": "_… e mais {omitted} entrada(s): a lista completa está {full_list}._",
+    "release.notes.cut": "_… texto cortado pelo limite do GitHub._",
+    "release.notes.full.link": "no [{path}]({url})",
+    "release.notes.full.file": "no `{path}`",
+    "release.notes.full.tag": "na mensagem da tag anotada",
+    "release.notes.table": (
+        "_A tabela com os sinais de cada uma das {count} mudança(s) não cabe aqui: ela está "
+        "inteira na mensagem do commit de release e na da tag anotada._"
+    ),
+    "release.notes.commit_record": "### Registro do commit de release",
+    "release.marked.pr": "🚀 Este PR foi publicado na versão [{tag}]({url}).",
+    "release.marked.issue": "🚀 Entregue na versão [{tag}]({url}).",
+    "release.pr.header": (
+        "PR de release gerado pela automação. Ao ser mesclado, a tag `{tag}` e a GitHub Release "
+        "são criadas. Não edite: ele é refeito a cada push na branch de destino."
+    ),
+    "release.preview.final.title": "### Prévia de versão: ao mesclar, este PR publica **{tag}** ({level})",
+    "release.preview.final.body": "Entram nesta versão este PR e {others} mudança(s) já acumulada(s) desde {base}.",
+    "release.preview.none.title": "### Prévia de versão: este PR não publica versão",
+    "release.preview.none.body": (
+        "Sem o label `{release}`, ele fica acumulado com {others} mudança(s) pendente(s) e entra na próxima "
+        "versão. Com `{release}`, o merge publicaria **{tag}** ({level})."
+    ),
+    "release.preview.footer": "<sub>Atualizado a cada push e a cada mudança de label.</sub>",
+    "release.preview.table_note": (
+        "_A tabela com os sinais de cada uma das {count} mudança(s) não cabe num comentário: "
+        "ela está no resumo da execução deste check e em `release.py plan`._"
+    ),
+    "release.analysis.comment.title": "### Análise de versão",
+    "release.analysis.comment.range": "Intervalo `{base}..{head}` · nível proposto: **{level}**",
+    "release.analysis.comment.start": "início",
+    "release.analysis.comment.columns": "| Mudança | Nível | Motivo |",
+    "release.analysis.comment.footer": (
+        "<sub>A análise só eleva o nível calculado pelos sinais determinísticos; nunca o reduz.</sub>"
+    ),
     # (fim de release)
     # === bootstrap.py (#40): as chaves deste módulo =================================================
     # (fim de bootstrap)
