@@ -13,6 +13,7 @@ da composição, porque é ele que decide quais padrões compor.
 from __future__ import annotations
 
 import copy
+import difflib
 import fnmatch
 import os
 import re
@@ -159,8 +160,6 @@ def _kind(value: Any) -> type:
 
 
 def _unknown(key: str, where: str, accepted: Iterable[str]) -> None:
-    import difflib
-
     names = sorted(accepted)
     close = difflib.get_close_matches(key, names, n=1, cutoff=0.6)
     hint = f" Você quis dizer `{close[0]}`?" if close else f" Aceitas: {', '.join(f'`{n}`' for n in names)}."

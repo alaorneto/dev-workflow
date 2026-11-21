@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 _ISSUE = r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>\d+)"
@@ -68,7 +68,7 @@ def visible_text(text: str) -> str:
     return "\n".join(lines)
 
 
-def _references(text: str, repository: str | None):
+def _references(text: str, repository: str | None) -> Iterator[tuple[str, int, bool]]:
     """``(palavra-chave, número, primeira_da_lista)`` de cada referência visível do repositório."""
     visible = visible_text(text)
     for match in ISSUE_REFERENCE.finditer(visible):
@@ -180,9 +180,9 @@ def sections(body: str) -> dict[str, str]:
             if owner:
                 result[title] = "\n".join(lines).strip()
 
-    for line in body.splitlines(keepends=True):
-        start, offset = offset, offset + len(line)
-        line = line.rstrip("\r\n")
+    for raw in body.splitlines(keepends=True):
+        start, offset = offset, offset + len(raw)
+        line = raw.rstrip("\r\n")
         opened = FENCE.match(line)
         heading = None
         if fence is None and opened:

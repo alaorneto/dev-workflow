@@ -645,7 +645,8 @@ def apply_analyses(changes: list[Change], analyses: list[dict[str, Any]], repo: 
         for analysis in analyses:  # em ordem cronológica: a última que cita a mudança vence
             for entry in analysis["changes"]:
                 by_pr = change.number is not None and entry.get("pr") == change.number
-                by_sha = "commit" in entry and any(c.sha.startswith(entry["commit"]) for c in [*change.commits, change])
+                shas = [*(commit.sha for commit in change.commits), change.sha]
+                by_sha = "commit" in entry and any(sha.startswith(entry["commit"]) for sha in shas)
                 if by_pr and not analysis_saw(analysis, change, repo):
                     stale = True
                     continue

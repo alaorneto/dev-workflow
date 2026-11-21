@@ -92,9 +92,8 @@ class RetryTest(unittest.TestCase):
 
 class TimeoutAndRemoteTest(unittest.TestCase):
     def test_a_call_past_the_timeout_ends_with_a_readable_error(self):
-        with mock.patch.dict(os.environ, {"DEV_WORKFLOW_TIMEOUT": "0.5"}):
-            with self.assertRaises(CommandError) as raised:
-                gh.run([sys.executable, "-c", "import time; time.sleep(10)"])
+        with mock.patch.dict(os.environ, {"DEV_WORKFLOW_TIMEOUT": "0.5"}), self.assertRaises(CommandError) as raised:
+            gh.run([sys.executable, "-c", "import time; time.sleep(10)"])
         self.assertIn("não respondeu em 0.5 s", str(raised.exception))
         self.assertIn("DEV_WORKFLOW_TIMEOUT", str(raised.exception))
 

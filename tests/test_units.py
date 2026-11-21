@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import support  # noqa: F401  (põe scripts/ no sys.path antes de importar devflow)
+import support  # põe scripts/ no sys.path antes de importar devflow
 from devflow import i18n
 from devflow.config import Config, ConfigError, load
 from devflow.plan import Change, Links, Plan, _glob_match, resolve_request, surface_hits, validate_analysis

@@ -324,7 +324,7 @@ class IssuesCliTest(SandboxCase):
         self._issue(8, "Exportar o relatório mensal em CSV com filtros por período")
         name = self.box.run("github_issues.py", "start", "8", "--dry-run").stdout.strip()
         slug = name.split("/", 1)[1].split("-", 1)[1]
-        words = "exportar-o-relatorio-mensal-em-csv-com-filtros-por-periodo".split("-")
+        words = ["exportar", "o", "relatorio", "mensal", "em", "csv", "com", "filtros", "por", "periodo"]
         self.assertLessEqual(len(slug), 40)
         self.assertTrue(set(slug.split("-")) <= set(words), slug)
         self.assertTrue("exportar-o-relatorio-mensal-em-csv-com-filtros-por-periodo".startswith(slug + "-"), slug)
@@ -488,6 +488,11 @@ class BootstrapTest(unittest.TestCase):
             ".git/HEAD": "x",
             "scripts/__pycache__/a.cpython.pyc": "x",
             "x-workspace/out.txt": "x",
+            "ruff.toml": "x",
+            "mypy.ini": "x",
+            ".ruff_cache/x": "x",
+            "SECURITY.md": "x",
+            "CONTRIBUTING.md": "x",
         }
         for name, content in box_files.items():
             (source / name).parent.mkdir(parents=True, exist_ok=True)

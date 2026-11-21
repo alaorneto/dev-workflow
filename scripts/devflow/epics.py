@@ -38,7 +38,7 @@ SETTINGS = EpicSettings()
 
 
 def configure(*, items_section: str, depends_marker: str, epic_label: str) -> None:
-    global SETTINGS
+    global SETTINGS  # noqa: PLW0603
     SETTINGS = EpicSettings(normalize_title(items_section), depends_marker, epic_label)
 
 

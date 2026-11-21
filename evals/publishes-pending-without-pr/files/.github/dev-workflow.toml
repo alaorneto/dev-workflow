@@ -1,0 +1,12 @@
+schema = 1
+
+[versioning]
+initial_version = "1.4.0"
+
+[[versioning.files]]
+path = "VERSION"
+search = '{current}'
+
+[[versioning.public_surfaces]]
+name = "API pública"
+globs = ["api/**"]

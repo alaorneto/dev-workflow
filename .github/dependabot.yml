@@ -1,0 +1,16 @@
+# Atualiza as actions fixadas por SHA em .github/workflows. O PR do Dependabot fica isento do fluxo
+# de issues por `exempt_authors` em .github/dev-workflow.toml. Ele não enxerga os modelos em
+# assets/workflows/: leve o mesmo SHA para lá no PR (o `bootstrap.py doctor` aponta a diferença).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: [ci]
+    commit-message:
+      prefix: ci
+      include: scope
