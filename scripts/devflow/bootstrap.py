@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -42,7 +43,21 @@ SKILL = Path(__file__).resolve().parents[2]
 ASSETS = SKILL / "assets"
 VENDOR_PATH = ".claude/skills/dev-workflow"
 # O que é do repositório do skill, não do skill: não vai para a cópia dentro de um projeto.
-COPY_IGNORE = ("__pycache__", "*.pyc", "*-workspace", ".git", ".github", ".pr-head")
+COPY_IGNORE = (
+    "__pycache__",
+    "*.pyc",
+    "*-workspace",
+    ".git",
+    ".github",
+    ".pr-head",
+    ".claude",  # configuração local do Claude Code e worktrees de quem desenvolve o skill
+    ".ruff_cache",
+    ".mypy_cache",
+    "ruff.toml",
+    "mypy.ini",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+)
 WORKFLOWS = ("pr-check.yml", "pr-merged.yml", "release.yml", "epic-checklist.yml", "semver-analysis.yml")
 OPTIONAL_WORKFLOWS = ("dev-workflow-selftest.yml",)
 # O que o fluxo gerou neste projeto: versão, onde está o skill e o hash de cada arquivo gerado.
@@ -338,7 +353,12 @@ class Transaction:
     def remove(self, path: Path) -> None:
         previous = path.read_bytes()
         path.unlink()
-        self._undo.append(lambda: (path.parent.mkdir(parents=True, exist_ok=True), path.write_bytes(previous)))
+
+        def restore() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(previous)
+
+        self._undo.append(restore)
 
     def swap_dir(self, staged: Path, destination: Path) -> None:
         """Põe ``staged`` no lugar de ``destination``; a anterior fica de reserva até o fim."""
@@ -388,10 +408,8 @@ def _rmtree(path: Path) -> None:
 
 
 def _rmdir_if_empty(path: Path) -> None:
-    try:
+    with contextlib.suppress(OSError):
         path.rmdir()
-    except OSError:
-        pass
 
 
 def _prune_empty(path: Path, root: Path) -> None:
@@ -984,12 +1002,12 @@ def doctor(_args: argparse.Namespace) -> int:
     repo = Repo(cfg, git)
     if cfg.versioning_enabled:
         latest = repo.current("HEAD") if git.ok("rev-parse", "HEAD") else None
-        current = latest[1] if latest else Version.parse(str(cfg.versioning["initial_version"]))
-        problems = check_version_files(cfg, current)
+        files_version = latest[1] if latest else Version.parse(str(cfg.versioning["initial_version"]))
+        problems = check_version_files(cfg, files_version)
         for problem in problems:
             report.error(problem)
         if not problems:
-            report.ok(f"{len(cfg.versioning['files'])} entrada(s) de arquivo de versão coerentes com {current}")
+            report.ok(f"{len(cfg.versioning['files'])} entrada(s) de arquivo de versão coerentes com {files_version}")
         if latest is None:
             report.todo(
                 f"sem tag de versão: crie a linha de base com `release.py baseline --push` ({cfg.tag_prefix}{current})"

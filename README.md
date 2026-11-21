@@ -245,9 +245,14 @@ The version is in `VERSION` and follows SemVer: a breaking change is anything th
 ```bash
 python3 -m unittest discover -s tests          # the whole suite (a few minutes: end-to-end tests with git)
 python3 scripts/bootstrap.py doctor            # this repository checked by its own skill
+python3 -m pip install ruff==0.17.6 mypy==2.4.1  # the versions pinned in the self-test workflow
+python3 -m ruff check .                        # lint, configured in ruff.toml
+python3 -m mypy                                # types of scripts/, configured in mypy.ini
 ```
 
-The self-test workflow (`Autoteste do skill dev-workflow`) runs the suite on Linux, Windows and macOS for every PR. The cases in `evals/` measure the agent's behaviour with the skill; run them with `claude plugin eval` or with the `skill-creator` skill.
+The self-test workflow (`Autoteste do skill dev-workflow`) runs the suite on Linux, Windows and macOS with Python 3.11, 3.12 and 3.13 (nine jobs, with Node for the Claude Code hook tests) and, in a separate job, `ruff check` and `mypy`; any of them failing fails the PR. `ruff.toml`, `mypy.ini`, `SECURITY.md` and `CONTRIBUTING.md` belong to this repository and are not copied into projects (`COPY_IGNORE` in `scripts/devflow/bootstrap.py`); in a project's copy the lint job skips its steps.
+
+Dependabot (`.github/dependabot.yml`) opens a weekly PR that bumps the actions pinned by SHA; `exempt_authors` in `.github/dev-workflow.toml` exempts it from the issue flow. It only sees `.github/workflows/`: apply the same SHAs to the templates in `assets/workflows/` in that PR (`bootstrap.py doctor` reports a rendered workflow that differs from its template). The cases in `evals/` measure the agent's behaviour with the skill; run them with `claude plugin eval` or with the `skill-creator` skill.
 
 ## Publishing your own copy
 

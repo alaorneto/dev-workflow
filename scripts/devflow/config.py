@@ -13,6 +13,7 @@ da composição, porque é ele que decide quais padrões compor.
 from __future__ import annotations
 
 import copy
+import difflib
 import fnmatch
 import os
 import re
@@ -159,8 +160,6 @@ def _kind(value: Any) -> type:
 
 
 def _unknown(key: str, where: str, accepted: Iterable[str]) -> None:
-    import difflib
-
     names = sorted(accepted)
     close = difflib.get_close_matches(key, names, n=1, cutoff=0.6)
     hint = f" Você quis dizer `{close[0]}`?" if close else f" Aceitas: {', '.join(f'`{n}`' for n in names)}."
@@ -245,6 +244,10 @@ class Config:
                 _fail(f"types.{name}.prefixes", "precisa de ao menos um prefixo de commit e branch.")
             if spec.get("section", FALLBACK_SECTION) not in section_ids:
                 _fail(f"types.{name}.section", "não corresponde a um id de `changelog.sections`.")
+        for hidden in d["changelog"]["hide"]:
+            if hidden not in section_ids:
+                accepted = ", ".join(f"`{name}`" for name in sorted(str(i) for i in section_ids))
+                _fail("changelog.hide", f"tem `{hidden}`, que não é id de `changelog.sections` ({accepted}).")
         for kind, level in d["commits"]["levels"].items():
             if level not in LEVELS:
                 _fail(f"commits.levels.{kind}", f"deve ser um de {', '.join(LEVELS)}.")

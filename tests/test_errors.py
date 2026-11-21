@@ -92,9 +92,8 @@ class RetryTest(unittest.TestCase):
 
 class TimeoutAndRemoteTest(unittest.TestCase):
     def test_a_call_past_the_timeout_ends_with_a_readable_error(self):
-        with mock.patch.dict(os.environ, {"DEV_WORKFLOW_TIMEOUT": "0.5"}):
-            with self.assertRaises(CommandError) as raised:
-                gh.run([sys.executable, "-c", "import time; time.sleep(10)"])
+        with mock.patch.dict(os.environ, {"DEV_WORKFLOW_TIMEOUT": "0.5"}), self.assertRaises(CommandError) as raised:
+            gh.run([sys.executable, "-c", "import time; time.sleep(10)"])
         self.assertIn("não respondeu em 0.5 s", str(raised.exception))
         self.assertIn("DEV_WORKFLOW_TIMEOUT", str(raised.exception))
 
@@ -163,6 +162,27 @@ class CommandFailureTest(SandboxCase):
     def test_a_missing_analysis_file_has_its_own_message(self):
         completed = self.box.run("release.py", "run", "--dry-run", "--analysis-file", "nao-existe.json")
         self.assertReadable(completed, "nao-existe.json", "não existe")
+
+
+class FlakyGitHubTest(SandboxCase):
+    def test_a_release_survives_a_passing_502_on_a_read(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT, labels=["release"])
+        box.update_state(lambda state: state.__setitem__("failures", {"GET pulls/10": [502]}))
+        out = self.assertRan(box.release())
+        self.assertIn("v1.3.0", out)
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0"])
+        self.assertEqual(box.state()["failures"]["GET pulls/10"], [])
+
+    def test_a_comment_is_not_repeated_after_a_502(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT, labels=["release"])
+        box.update_state(lambda state: state.__setitem__("failures", {"POST issues/10/comments": [502]}))
+        out = self.assertRan(box.release())  # marcar é complemento: a versão sai e o aviso diz o que faltou
+        self.assertIn("não consegui marcar #10", out)
+        self.assertIn("HTTP 502 em POST repos/acme/demo/issues/10/comments", out)
+        self.assertEqual(box.state()["log"].count("POST issues/10/comments"), 1)
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0"])
 
 
 class RefusedPushTest(SandboxCase):
