@@ -285,6 +285,43 @@ MESSAGES: dict[str, str] = {
     "release.report.next.would": "seria publicada (nenhum PR pediu versão ainda)",
     "release.report.requested_by": "Versão pedida por: {changes}.",
     "release.report.problems": "**Problemas que impedem a release**",
+    # --- notas, PR de release e marcações --------------------------------------------------------
+    "release.notes.why": "### Por que este número",
+    "release.notes.more": "_… e mais {omitted} entrada(s): a lista completa está {full_list}._",
+    "release.notes.cut": "_… texto cortado pelo limite do GitHub._",
+    "release.notes.full.link": "no [{path}]({url})",
+    "release.notes.full.file": "no `{path}`",
+    "release.notes.full.tag": "na mensagem da tag anotada",
+    "release.notes.table": (
+        "_A tabela com os sinais de cada uma das {count} mudança(s) não cabe aqui: ela está "
+        "inteira na mensagem do commit de release e na da tag anotada._"
+    ),
+    "release.notes.commit_record": "### Registro do commit de release",
+    "release.marked.pr": "🚀 Este PR foi publicado na versão [{tag}]({url}).",
+    "release.marked.issue": "🚀 Entregue na versão [{tag}]({url}).",
+    "release.pr.header": (
+        "PR de release gerado pela automação. Ao ser mesclado, a tag `{tag}` e a GitHub Release "
+        "são criadas. Não edite: ele é refeito a cada push na branch de destino."
+    ),
+    "release.preview.final.title": "### Prévia de versão: ao mesclar, este PR publica **{tag}** ({level})",
+    "release.preview.final.body": "Entram nesta versão este PR e {others} mudança(s) já acumulada(s) desde {base}.",
+    "release.preview.none.title": "### Prévia de versão: este PR não publica versão",
+    "release.preview.none.body": (
+        "Sem o label `{release}`, ele fica acumulado com {others} mudança(s) pendente(s) e entra na próxima "
+        "versão. Com `{release}`, o merge publicaria **{tag}** ({level})."
+    ),
+    "release.preview.footer": "<sub>Atualizado a cada push e a cada mudança de label.</sub>",
+    "release.preview.table_note": (
+        "_A tabela com os sinais de cada uma das {count} mudança(s) não cabe num comentário: "
+        "ela está no resumo da execução deste check e em `release.py plan`._"
+    ),
+    "release.analysis.comment.title": "### Análise de versão",
+    "release.analysis.comment.range": "Intervalo `{base}..{head}` · nível proposto: **{level}**",
+    "release.analysis.comment.start": "início",
+    "release.analysis.comment.columns": "| Mudança | Nível | Motivo |",
+    "release.analysis.comment.footer": (
+        "<sub>A análise só eleva o nível calculado pelos sinais determinísticos; nunca o reduz.</sub>"
+    ),
     # (fim de release)
     # === bootstrap.py (#40): as chaves deste módulo =================================================
     # (fim de bootstrap)

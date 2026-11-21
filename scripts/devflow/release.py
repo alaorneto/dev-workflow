@@ -318,21 +318,31 @@ def truncate_lines(text: str, limit: int, note: str) -> str:
 
 
 def fit_notes(
-    changelog: str, justification: str, compact: str, extra: str, limit: int | None, *, full_list: str
+    changelog: str,
+    justification: str,
+    compact: str,
+    extra: str,
+    limit: int | None,
+    *,
+    full_list: str,
+    language: str | None = None,
 ) -> str:
     """Notas que cabem em ``limit`` caracteres (o GitHub recusa corpo maior; ``None`` não limita).
 
     Primeiro a tabela por mudança sai (``compact`` diz onde ela continua inteira); se ainda não
-    couber, o changelog é cortado em linha inteira, com a indicação de ``full_list``.
+    couber, o changelog é cortado em linha inteira, com a indicação de ``full_list``. ``language``
+    é o idioma dos títulos e avisos; sem ele, vale o idioma ativo.
     """
-    why = "### Por que este número\n\n"
+    language = language or i18n.active()
+    why = i18n.translate(language, "release.notes.why") + "\n\n"
     full = "\n\n".join(part for part in (changelog, why + justification, extra) if part) + "\n"
     if limit is None or len(full) <= limit:
         return full
     tail = "\n\n" + why + compact + "\n"
-    note = f"_… e mais {{omitted}} entrada(s): a lista completa está {full_list}._"
+    # `{omitted}` fica no texto: `truncate_lines` o preenche com o que de fato ficou de fora.
+    note = i18n.translate(language, "release.notes.more", full_list=full_list)
     body = truncate_lines(changelog, max(limit - len(tail), 0), note)
-    return truncate_lines(body + tail, limit, "_… texto cortado pelo limite do GitHub._")
+    return truncate_lines(body + tail, limit, i18n.translate(language, "release.notes.cut"))
 
 
 def notes_changelog(plan: Plan, cfg: Config, links: Links) -> str:
@@ -370,21 +380,14 @@ def release_notes(
     changelog = notes_changelog(plan, cfg, links)
     path = cfg.changelog["path"] if writes_changelog(plan, cfg) else ""
     if path and links.web and ref:
-        full_list = f"no [{path}]({links.web}/blob/{ref}/{path})"
+        full_list = cfg.t("release.notes.full.link", path=path, url=f"{links.web}/blob/{ref}/{path}")
     elif path:
-        full_list = f"no `{path}`"
+        full_list = cfg.t("release.notes.full.file", path=path)
     else:  # sem arquivo, ou pré-release que não o escreve: a lista inteira está na anotação da tag
-        full_list = "na mensagem da tag anotada"
-    compact = render_justification(
-        plan,
-        cfg,
-        links,
-        table_note=(
-            f"_A tabela com os sinais de cada uma das {len(plan.changes)} mudança(s) não cabe aqui: ela está "
-            "inteira na mensagem do commit de release e na da tag anotada._"
-        ),
-    )
-    return fit_notes(changelog, render_justification(plan, cfg, links), compact, extra, limit, full_list=full_list)
+        full_list = cfg.t("release.notes.full.tag")
+    compact = render_justification(plan, cfg, links, table_note=cfg.t("release.notes.table", count=len(plan.changes)))
+    justification = render_justification(plan, cfg, links)
+    return fit_notes(changelog, justification, compact, extra, limit, full_list=full_list, language=cfg.language)
 
 
 # --- contexto de execução ----------------------------------------------------------------------
@@ -558,10 +561,10 @@ def mark_included(session: Session, plan: Plan, tag: str) -> None:
     targets: dict[int, str] = {}
     for change in plan.changes:
         if change.number is not None:
-            targets[change.number] = f"{mark}\n🚀 Este PR foi publicado na versão [{tag}]({url}).\n"
+            targets[change.number] = f"{mark}\n{cfg.t('release.marked.pr', tag=tag, url=url)}\n"
         for issue in change.issues:
             if issue.closing:
-                targets.setdefault(issue.number, f"{mark}\n🚀 Entregue na versão [{tag}]({url}).\n")
+                targets.setdefault(issue.number, f"{mark}\n{cfg.t('release.marked.issue', tag=tag, url=url)}\n")
     milestone = _ensure_milestone(github, tag) if "milestone" in cfg.release["mark"] else None
     trusted = cfg.versioning["trusted_bots"]
     for number, body in targets.items():
@@ -587,7 +590,7 @@ def publish(session: Session, tag: str, version: Version, target: str, plan: Pla
         release_commit = session.repo.log(f"{target}~1..{target}" if git.ok("rev-parse", f"{target}~1") else target)
         bodies = [c.body for c in release_commit if cfg.release_subject_pattern().match(c.subject) and c.body]
         if bodies:
-            extra = "### Registro do commit de release\n\n" + bodies[-1]
+            extra = cfg.t("release.notes.commit_record") + "\n\n" + bodies[-1]
     notes = release_notes(plan, cfg, session.links, extra)  # tag anotada: sem limite, com tudo
     if tag not in session.repo.version_tags():
         path = _write_temp(f"{tag}\n\n{notes}")
@@ -634,10 +637,7 @@ def open_release_pr(session: Session, plan: Plan) -> None:
     tag, branch = str(plan.tag(cfg)), cfg.release["pr_branch"]
     git("push", "--force", REMOTE, f"HEAD:refs/heads/{branch}")
     title = cfg.release_subject(tag)
-    header = (
-        f"{RELEASE_PR_MARK}\nPR de release gerado pela automação. Ao ser mesclado, a tag `{tag}` e a GitHub Release "
-        "são criadas. Não edite: ele é refeito a cada push na branch de destino.\n\n"
-    )
+    header = f"{RELEASE_PR_MARK}\n{cfg.t('release.pr.header', tag=tag)}\n\n"
     limit = BODY_LIMIT - NOTES_MARGIN - len(header)
     body = header + release_notes(plan, cfg, session.links, limit=limit, ref=branch)
     existing = github.open_pulls_from(branch)
@@ -807,9 +807,8 @@ def report(plan: Plan, cfg: Config, links: Links, *, pr: int | None = None, tabl
                 fresh = sum(1 for change in plan.changes if change.fresh) - 1
                 lines.append(cfg.t("preview.prerelease.news", previous=plan.previous_tag, fresh=fresh))
         elif asks:
-            lines.append(f"### Prévia de versão: ao mesclar, este PR publica **{tag}** ({plan.level})")
-            since = plan.base_tag or "o início"
-            lines.append(f"Entram nesta versão este PR e {others} mudança(s) já acumulada(s) desde {since}.")
+            lines.append(cfg.t("release.preview.final.title", tag=tag, level=plan.level))
+            lines.append(cfg.t("release.preview.final.body", others=others, base=base))
             if plan.cycle:
                 cycle = ", ".join(plan.cycle)
                 lines.append(cfg.t("preview.final.closes_cycle", cycle=cycle, base=base))
@@ -818,11 +817,8 @@ def report(plan: Plan, cfg: Config, links: Links, *, pr: int | None = None, tabl
             lines.append(cfg.t("preview.pending.title", tag=tag, level=plan.level))
             lines.append(cfg.t("preview.pending.body", asked=asked, tag=tag))
         else:
-            lines.append("### Prévia de versão: este PR não publica versão")
-            lines.append(
-                f"Sem o label `{release}`, ele fica acumulado com {others} mudança(s) pendente(s) e entra na próxima "
-                f"versão. Com `{release}`, o merge publicaria **{tag}** ({plan.level})."
-            )
+            lines.append(cfg.t("release.preview.none.title"))
+            lines.append(cfg.t("release.preview.none.body", release=release, others=others, tag=tag, level=plan.level))
             channels = ", ".join(f"`{cfg.channel_label(channel)}`" for channel in cfg.prerelease_channels)
             if channels:
                 lines.append(cfg.t("preview.none.channels", labels=channels))
@@ -915,12 +911,9 @@ def preview(session: Session, args: argparse.Namespace) -> int:
         with open(summary, "a", encoding="utf-8") as file:
             file.write(text)
     if args.comment and session.github.enabled:
-        footer = "\n<sub>Atualizado a cada push e a cada mudança de label.</sub>\n"
+        footer = "\n" + cfg.t("release.preview.footer") + "\n"
         if len(PREVIEW_MARK) + len(text) + len(footer) + 1 > BODY_LIMIT - NOTES_MARGIN:
-            note = (
-                f"_A tabela com os sinais de cada uma das {len(plan.changes)} mudança(s) não cabe num comentário: "
-                "ela está no resumo da execução deste check e em `release.py plan`._"
-            )
+            note = cfg.t("release.preview.table_note", count=len(plan.changes))
             compact = report(plan, cfg, session.links, pr=args.pr, table_note=note)
             text = truncate_lines(compact, BODY_LIMIT - NOTES_MARGIN - len(PREVIEW_MARK) - len(footer) - 1, note)
         body = f"{PREVIEW_MARK}\n{text}{footer}"
@@ -946,10 +939,15 @@ def analysis_comment(data: dict[str, Any]) -> str:
         f"<!-- {ANALYSIS_MARK}",
         payload,
         "-->",
-        "### Análise de versão",
-        f"Intervalo `{data['base'] or 'início'}..{data['head'][:7] or 'HEAD'}` · nível proposto: **{data['level']}**",
+        i18n.t("release.analysis.comment.title"),
+        i18n.t(
+            "release.analysis.comment.range",
+            base=data["base"] or i18n.t("release.analysis.comment.start"),
+            head=data["head"][:7] or "HEAD",
+            level=data["level"],
+        ),
         "",
-        "| Mudança | Nível | Motivo |",
+        i18n.t("release.analysis.comment.columns"),
         "|---|---|---|",
     ]
     for entry in data["changes"]:
@@ -959,7 +957,7 @@ def analysis_comment(data: dict[str, Any]) -> str:
         lines.append(f"| {key} | {entry['level']}{' ⚠' if entry['breaking'] else ''} | {summary} |")
     if data["notes"]:
         lines += ["", data["notes"]]
-    lines += ["", "<sub>A análise só eleva o nível calculado pelos sinais determinísticos; nunca o reduz.</sub>"]
+    lines += ["", i18n.t("release.analysis.comment.footer")]
     return "\n".join(lines) + "\n"
 
 
