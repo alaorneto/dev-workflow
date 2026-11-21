@@ -113,6 +113,21 @@ class Change:
         return any(hit.action == "review" for hit in self.surfaces)
 
 
+class Problem(str):
+    """Um problema do plano: o texto para quem opera e uma chave que não muda com o alvo.
+
+    O texto de um mesmo problema cita a versão que seria publicada, que muda quando um PR entra
+    na conta. Quem compara dois planos (o check do pedido de versão de um PR) usa a chave.
+    """
+
+    key: str
+
+    def __new__(cls, key: str, text: str) -> Problem:
+        problem = super().__new__(cls, text)
+        problem.key = key
+        return problem
+
+
 @dataclass
 class Override:
     level: str
@@ -152,9 +167,11 @@ class Plan:
 class Line:
     """Onde a linha de um ref está: a última final, o ciclo de pré-releases e a versão corrente.
 
-    O **ciclo** são as tags de pré-release alcançáveis do ref e não da última final. Ele é definido
-    por alcance no grafo, não por comparação de número: uma pré-release maior que ficou *atrás* de
-    uma final (um repositório que já regrediu) não volta a contar, e nada é forçado a alcançá-la.
+    O **ciclo** são as tags de pré-release alcançáveis do ref, não alcançáveis da última final e
+    acima dela. O alcance no grafo cobre o repositório que já regrediu: uma pré-release maior que
+    ficou *atrás* de uma final não volta a contar, e nada é forçado a alcançá-la. O número cobre a
+    linha de manutenção mesclada de volta: as pré-releases dela ficam alcançáveis de uma branch que
+    já publicou uma versão maior, e não são o ciclo desta.
     A **versão corrente** é a que os arquivos de versão carregam: a pré-release mais recente do
     ciclo ou, sem ciclo, a última final.
     """
@@ -206,14 +223,24 @@ class Repo:
         finals = {tag: version for tag, version in tags.items() if not version.is_prerelease}
         final_tag = max(finals, key=lambda name: finals[name].key()) if finals else None
         behind = self.version_tags(final_tag) if final_tag else {}
-        names = sorted((t for t, v in tags.items() if v.is_prerelease and t not in behind), key=lambda t: tags[t].key())
-        cycle = {tag: tags[tag] for tag in names}
+        last = finals[final_tag].key() if final_tag else None
+        # Abaixo da última final não há ciclo desta linha: é o de uma linha de manutenção mesclada aqui
+        # (`1.2.1-rc.1` numa branch que já publicou `1.3.0`), tenha ela publicado a final dela ou não.
+        ahead = {
+            tag: version
+            for tag, version in tags.items()
+            if version.is_prerelease and tag not in behind and (last is None or version.key() > last)
+        }
+        cycle = dict(sorted(ahead.items(), key=lambda item: item[1].key()))
         current_tag = final_tag
         if cycle:
             # A mais recente pelo grafo, não a de maior número: é a que os arquivos de versão trazem.
-            limit = [f"^{final_tag}"] if final_tag else []
-            newest = self.git("rev-list", "--topo-order", "-n", "1", *cycle, *limit)
-            here = set(self.git("tag", "--list", f"{self.cfg.tag_prefix}*", "--points-at", newest).split())
+            # Com duas pontas que não se alcançam (ciclos de linhas diferentes mesclados), a maior delas.
+            pattern = f"{self.cfg.tag_prefix}*"
+            tips = self.git("merge-base", "--independent", *(f"{tag}^{{commit}}" for tag in cycle)).split()
+            here: set[str] = set()
+            for tip in tips:
+                here.update(self.git("tag", "--list", pattern, "--points-at", tip).split())
             current_tag = [tag for tag in cycle if tag in here][-1]
         return Line(tags, final_tag, cycle, current_tag)
 
@@ -695,7 +722,8 @@ def build_plan(
         return plan
     if not changes:
         if forced:
-            plan.problems.append("Nada se acumulou desde a última versão; não há o que publicar.")
+            text = "Nada se acumulou desde a última versão; não há o que publicar."
+            plan.problems.append(Problem("nothing", text))
         return plan
     plan.notes += request_notes
     if plan.override:
@@ -713,7 +741,8 @@ def build_plan(
         # O ciclo já publicou pré-releases de um alvo maior: descer faria a versão regredir.
         tag, core = started
         if plan.override:
-            plan.problems.append(cfg.t("plan.cycle.override_below", target=target, floor=core, tag=tag))
+            text = cfg.t("plan.cycle.override_below", target=target, floor=core, tag=tag)
+            plan.problems.append(Problem(f"override-below-cycle:{core}", text))
         else:
             plan.notes.append(cfg.t("plan.cycle.floor", target=target, floor=core, tag=tag))
             plan.level, target = level_between(base_version, core), core
@@ -730,10 +759,11 @@ def build_plan(
             plan.notes.append(f"`{path}` declara o piso {version}: o nível sobe de {plan.level} para {raised}.")
             plan.level, target = raised, next_version(base_version, raised, zero_major)
         else:
-            plan.problems.append(
+            text = (
                 f"`{path}` declara o piso {version}, maior que a versão {target} que seria publicada. "
                 "Corrija o piso ou classifique a mudança de modo que a versão o alcance."
             )
+            plan.problems.append(Problem(f"floor:{path}@{version}", text))
     if started and target.key() > started[1].key():
         plan.notes.append(cfg.t("plan.cycle.target_changed", old=started[1], new=target, tag=started[0]))
     everything = repo.version_tags()
@@ -755,41 +785,44 @@ def build_plan(
             channel = plan.prerelease = ahead.pre[0]
             target = next_prerelease(final, channel, everything.values(), allowed)
         elif ahead is not None:
-            plan.problems.append(
-                cfg.t(
-                    "plan.channel.regressed",
-                    channel=channel,
-                    current=ahead.pre[0],
-                    core=final,
-                    tag=f"{cfg.tag_prefix}{ahead}",
-                )
+            text = cfg.t(
+                "plan.channel.regressed",
+                channel=channel,
+                current=ahead.pre[0],
+                core=final,
+                tag=f"{cfg.tag_prefix}{ahead}",
             )
+            plan.problems.append(Problem(f"channel-regressed:{channel}", text))
         current = line.current
         same = current is not None and current.final == final and current.pre[:1] == (channel,)
         if prerelease and same and not any(change.fresh for change in changes):
             # A promoção a um canal mais maduro não precisa de mudança nova; repetir o canal, sim.
-            plan.problems.append(cfg.t("plan.prerelease.nothing_new", tag=line.current_tag, channel=channel))
+            text = cfg.t("plan.prerelease.nothing_new", tag=line.current_tag, channel=channel)
+            plan.problems.append(Problem("nothing-new", text))
     plan.version = target
     elsewhere = sorted(
         (tag for tag, version in everything.items() if version.final == target.final and tag not in line.tags),
         key=lambda tag: everything[tag].key(),
     )
     if f"{cfg.tag_prefix}{target}" in everything:
-        plan.problems.append(
+        text = (
             f"A tag {cfg.tag_prefix}{target} já existe. Numa branch de manutenção só cabem correções; "
             "confira a branch e o nível calculado."
         )
+        plan.problems.append(Problem("tag-exists", text))
     elif elsewhere:
         # Outra linha já usa este núcleo (o ciclo da branch principal, por exemplo): não se divide um número.
-        plan.problems.append(cfg.t("plan.core.taken", core=target.core, tags=", ".join(elsewhere)))
+        text = cfg.t("plan.core.taken", core=target.core, tags=", ".join(elsewhere))
+        plan.problems.append(Problem("core-taken", text))
     if cfg.versioning["require_analysis"] and not plan.override:
         uncovered = [change.key for change in changes if change.needs_review and not change.analyzed]
         if uncovered:
-            plan.problems.append(
+            text = (
                 "Mudanças em superfícies públicas sem análise registrada: "
                 + ", ".join(uncovered)
                 + ". Registre a análise (`release.py record-analysis`) ou sobreponha o nível com motivo."
             )
+            plan.problems.append(Problem("analysis:" + ",".join(uncovered), text))
     return plan
 
 

@@ -360,12 +360,19 @@ class BootstrapTest(unittest.TestCase):
         self.assertIn('--head-ref refs/dev-workflow/pr-head --check', check)
         # A base pode ainda não ter a opção: o passo não reprova o PR que a traz.
         self.assertIn('preview --help | grep -q -- "--check"', check)
+        # O plano é feito sobre a ponta atual da branch de destino; o SHA do evento fica de reserva.
+        self.assertEqual(check.count('base="refs/remotes/origin/$BASE_REF"'), 2)
+        self.assertEqual(check.count('|| base="$BASE_SHA"'), 2)
+        self.assertEqual(check.count('--base-ref "$base"'), 2)
+        self.assertNotIn('--base-ref "$BASE_SHA"', check)
         release = box.read(".github/workflows/release.yml")
         self.assertIn("prerelease: ${{ steps.run.outputs.prerelease }}", release)
         self.assertIn("channel: ${{ steps.run.outputs.channel }}", release)
         analysis = box.read(".github/workflows/semver-analysis.yml")
         self.assertIn("labels.*.name, 'release') ||", analysis)
         self.assertIn("join(github.event.pull_request.labels.*.name, ',')), ',release:')", analysis)
+        self.assertIn('base="refs/remotes/origin/$BASE_REF"', analysis)
+        self.assertIn('--pr "$PR_NUMBER" --base-ref "$base" --head-ref "$HEAD_SHA" > semver-plan.json', analysis)
 
         # Quem troca os labels na configuração regenera a condição com `update --force`.
         labels = '\n[labels]\nrelease = "publicar"\nprerelease_prefix = "canal/"\n'
