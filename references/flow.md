@@ -127,7 +127,7 @@ Um fechamento feito com o token do workflow não dispara outro evento `issues: c
 
 ## Limites conhecidos
 
-- Mensagens dos scripts e textos dos comentários estão em português; títulos de seção e labels são configuráveis.
+- O idioma é `pt-BR` ou `en` (chave `language`): ele decide os padrões, o que o `bootstrap.py` gera e as mensagens que já estão no catálogo. As mensagens dos scripts que ainda não estão no catálogo, os comentários dos workflows gerados, este documento e o `SKILL.md` continuam em português. Trocar o idioma muda o nome do check obrigatório, que tem de ser ajustado à mão na proteção de branch ([instalação](installation.md#trocar-o-idioma-de-um-projeto)).
 - Só GitHub (`gh`). O cálculo funciona sem ele (`DEV_WORKFLOW_OFFLINE=1`), com os sinais dos commits.
 - Um repositório, uma versão. Monorepo com versões independentes por pacote não é coberto.
 - O token padrão do Actions não redispara workflows: o PR de release (modo `pull-request`) não roda checks sozinho, e a tag criada não dispara workflows `on: push: tags`. Use `release.dispatch_workflow` ou o segredo `RELEASE_TOKEN`.

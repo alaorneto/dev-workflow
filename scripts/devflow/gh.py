@@ -17,6 +17,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from . import i18n
+
 GH_ENV = "DEV_WORKFLOW_GH"
 OFFLINE_ENV = "DEV_WORKFLOW_OFFLINE"
 TIMEOUT_ENV = "DEV_WORKFLOW_TIMEOUT"
@@ -44,7 +46,7 @@ class CommandError(RuntimeError):
         self.returncode = completed.returncode
         self.stderr = (completed.stderr or "").strip()
         self.stdout = (completed.stdout or "").strip()
-        detail = message or self.stderr or self.stdout or f"saída {completed.returncode}"
+        detail = message or self.stderr or self.stdout or i18n.t("gh.exit", code=completed.returncode)
         super().__init__(f"`{' '.join(self.command[:4])}`: {detail}")
 
 
@@ -60,11 +62,8 @@ def _timeout() -> float:
 def _missing_tool(command: Sequence[str]) -> str:
     name = Path(command[0]).name if command else "?"
     if name.lower().startswith("gh"):
-        return (
-            f"`{command[0]}` não foi encontrado: a CLI do GitHub é necessária (https://cli.github.com, depois "
-            f"`gh auth login`). Para seguir só com o git, sem GitHub, use {OFFLINE_ENV}=1."
-        )
-    return f"`{command[0]}` não foi encontrado no PATH; instale-o ou confira o PATH."
+        return i18n.t("gh.missing.gh", command=command[0], env=OFFLINE_ENV)
+    return i18n.t("gh.missing.tool", command=command[0])
 
 
 def run(
@@ -93,7 +92,7 @@ def run(
         raise CommandError(command, failed, _missing_tool(command)) from None
     except subprocess.TimeoutExpired:
         failed = subprocess.CompletedProcess(list(command), 124, "", "")
-        message = f"não respondeu em {timeout:g} s; aumente {TIMEOUT_ENV} se a rede estiver lenta."
+        message = i18n.t("gh.timeout", seconds=f"{timeout:g}", env=TIMEOUT_ENV)
         raise CommandError(command, failed, message) from None
     if check and completed.returncode != 0:
         raise CommandError(command, completed)
@@ -153,7 +152,7 @@ def gh_command() -> list[str]:
     except ValueError:
         command = None
     if not isinstance(command, list) or not all(isinstance(part, str) for part in command):
-        raise ValueError(f"{GH_ENV} deve ser uma lista JSON de strings.")
+        raise ValueError(i18n.t("gh.env.invalid", env=GH_ENV))
     return command
 
 
@@ -233,16 +232,19 @@ class GitHub:
             if attempt < attempts - 1 and is_transient(status, completed.stderr):
                 sleep(delays[attempt])
                 continue
-            shown = f"HTTP {status}" if status else f"saída {completed.returncode}"
-            tries = f" depois de {attempt + 1} tentativas" if attempt else ""
-            message = f"o GitHub respondeu {shown} em {route}{tries}: {completed.stderr.strip() or completed.stdout.strip()}"
+            shown = f"HTTP {status}" if status else i18n.t("gh.exit", code=completed.returncode)
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            if attempt:
+                message = i18n.t("gh.api.failed_after", shown=shown, route=route, count=attempt + 1, detail=detail)
+            else:
+                message = i18n.t("gh.api.failed", shown=shown, route=route, detail=detail)
             raise CommandError(["gh", *args], completed, message)
         if not completed.stdout.strip():
             return {}
         try:
             data = json.loads(completed.stdout)
         except ValueError:
-            message = f"a resposta de {route} não é JSON válido: {completed.stdout.strip()[:200]}"
+            message = i18n.t("gh.api.not_json", route=route, body=completed.stdout.strip()[:200])
             raise CommandError(["gh", *args], completed, message) from None
         if paginate and isinstance(data, list):  # --slurp devolve uma lista de páginas
             return [item for page in data for item in (page if isinstance(page, list) else [page])]

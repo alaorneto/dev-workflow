@@ -46,9 +46,9 @@ const FLOW =
   "Este projeto segue o skill `dev-workflow` para issue, branch, commit, PR, versão, release e " +
   "fechamento de issue: se o pedido envolve um deles ou vai mudar arquivo versionado, carregue o " +
   "skill antes de agir. Perguntas e investigações sem mudança de arquivo não precisam dele.";
-// Palavras que indicam uma etapa do fluxo; o skill decide o resto.
+// Palavras que indicam uma etapa do fluxo, em português e em inglês; o skill decide o resto.
 const FLOW_WORDS =
-  /(?:^|[^\p{L}\d])(?:pull[\s-]?requests?|PRs?|issues?|epics?|commit\p{L}*|branch\p{L}*|merge\p{L}*|mescl\p{L}*|releases?|vers(?:ão|ao|ões|oes|ion\p{L}*)|semver|changelog|tags?|bump|hotfix|plano)(?![\p{L}\d])/iu;
+  /(?:^|[^\p{L}\d])(?:pull[\s-]?requests?|PRs?|issues?|epics?|commit\p{L}*|branch\p{L}*|merge\p{L}*|mescl\p{L}*|pr[eé]-?releases?|releases?|milestones?|vers(?:ão|ao|ões|oes|ion\p{L}*)|semver|changelog|tags?|bump|hotfix|plan(?:o|os|s|ned|ning)?|planej\p{L}*)(?![\p{L}\d])/iu;
 
 function context(eventName, text) {
   emit({ hookSpecificOutput: { hookEventName: eventName, additionalContext: text } });

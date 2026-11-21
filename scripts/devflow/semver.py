@@ -6,6 +6,8 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
+from . import i18n
+
 LEVELS = ("none", "patch", "minor", "major")
 ZERO_MAJOR_POLICIES = ("breaking-is-minor", "strict")
 
@@ -38,7 +40,7 @@ class Version:
     def parse(cls, text: str) -> Version:
         match = _SEMVER.match(text.strip()) if isinstance(text, str) else None
         if not match:
-            raise ValueError(f"'{text}' não é uma versão SemVer (major.minor.patch[-pre][+build]).")
+            raise ValueError(i18n.t("semver.parse", text=text))
         pre = tuple(match.group("pre").split(".")) if match.group("pre") else ()
         return cls(
             int(match.group("major")), int(match.group("minor")), int(match.group("patch")), pre, match["build"] or ""
@@ -92,12 +94,12 @@ class Version:
             return Version(self.major, self.minor + 1, 0)
         if level == "patch":
             return Version(self.major, self.minor, self.patch + 1)
-        raise ValueError(f"Nível '{level}' não incrementa a versão.")
+        raise ValueError(i18n.t("semver.bump", level=level))
 
 
 def level_index(level: str) -> int:
     if level not in LEVELS:
-        raise ValueError(f"Nível desconhecido: '{level}'. Use um de {', '.join(LEVELS)}.")
+        raise ValueError(i18n.t("semver.level.unknown", level=level, accepted=", ".join(LEVELS)))
     return LEVELS.index(level)
 
 
@@ -113,7 +115,7 @@ def effective_level(current: Version, level: str, zero_major: str = "breaking-is
     de quem mantém o projeto, tomada por sobreposição explícita, nunca pelo cálculo.
     """
     if zero_major not in ZERO_MAJOR_POLICIES:
-        raise ValueError(f"Política de 0.x desconhecida: '{zero_major}'.")
+        raise ValueError(i18n.t("semver.zero_major.unknown", policy=zero_major))
     if current.major == 0 and level == "major" and zero_major == "breaking-is-minor":
         return "minor"
     return level
@@ -131,9 +133,10 @@ def next_prerelease(
     ``allowed`` é a lista de canais do projeto; um canal fora dela é recusado.
     """
     if not re.fullmatch(r"[A-Za-z][0-9A-Za-z-]*", channel):
-        raise ValueError(f"Canal de pré-release inválido: '{channel}'.")
+        raise ValueError(i18n.t("semver.channel.invalid", channel=channel))
     if allowed is not None and channel not in allowed:
-        raise ValueError(f"Canal de pré-release '{channel}' fora da lista do projeto ({', '.join(allowed) or 'vazia'}).")
+        accepted = ", ".join(allowed) or i18n.t("semver.channel.empty_list")
+        raise ValueError(i18n.t("semver.channel.outside", channel=channel, accepted=accepted))
     numbers = [
         int(version.pre[1])
         for version in existing

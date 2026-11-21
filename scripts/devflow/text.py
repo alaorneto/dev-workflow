@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import functools
 import re
 import unicodedata
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+
+from . import i18n
 
 _ISSUE = r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>\d+)"
 _CLOSING = r"close[sd]?|fix(?:e[sd])?|resolve[sd]?"
@@ -208,8 +211,43 @@ def sections(body: str) -> dict[str, str]:
     return result
 
 
+@functools.cache
+def _equivalent_titles() -> dict[str, tuple[str, ...]]:
+    """``{título normalizado: os equivalentes em outros idiomas}``, a partir de ``i18n.section_groups``."""
+    table: dict[str, tuple[str, ...]] = {}
+    for group in i18n.section_groups():
+        names = sorted({normalize_title(name) for name in group})
+        for name in names:
+            table[name] = tuple(other for other in names if other != name)
+    return table
+
+
+def equivalent_titles(title: str) -> tuple[str, ...]:
+    """Os equivalentes normalizados de ``title`` nos outros idiomas (vazio se não há)."""
+    return _equivalent_titles().get(normalize_title(title), ())
+
+
+def same_title(found: str, wanted: str) -> bool:
+    """``found`` é o título ``wanted`` ou o equivalente dele em outro idioma."""
+    found, wanted = normalize_title(found), normalize_title(wanted)
+    return found == wanted or found in _equivalent_titles().get(wanted, ())
+
+
+def find_section(found: dict[str, str], title: str) -> str | None:
+    """O texto da seção ``title`` num resultado de ``sections``.
+
+    Vale o título exato e, se ele não estiver lá, o mesmo título em outro idioma (``## Version`` num
+    projeto em português, ``## Versão`` num em inglês): a troca de idioma não quebra issues e PRs
+    abertos antes dela. Um título que não é equivalente de nenhum continua faltando.
+    """
+    wanted = normalize_title(title)
+    if wanted in found:
+        return found[wanted]
+    return next((found[name] for name in _equivalent_titles().get(wanted, ()) if name in found), None)
+
+
 def section(body: str, title: str) -> str | None:
-    return sections(body).get(normalize_title(title))
+    return find_section(sections(body), title)
 
 
 def meaningful(text: str | None) -> str:
@@ -220,10 +258,9 @@ def meaningful(text: str | None) -> str:
 
 def marked_value(text: str | None, marker: str) -> str:
     """Valor de uma linha ``Marcador: valor`` (por exemplo o motivo de uma sobreposição)."""
-    wanted = marker.casefold()
     for line in meaningful(text).splitlines():
         head, _, tail = line.lstrip("-* ").partition(":")
-        if head.strip().strip("*_").casefold() == wanted and tail.strip().strip("*_ "):
+        if same_title(head.strip().strip("*_"), marker) and tail.strip().strip("*_ "):
             return tail.strip().strip("*_ ")
     return ""
 
@@ -240,4 +277,4 @@ def slugify(title: str, limit: int = 40) -> str:
     if len(slug) > limit:
         cut = slug[: limit + 1]
         slug = cut[: cut.rfind("-")] if "-" in cut[1:] else slug[:limit]
-    return slug.rstrip("-") or "trabalho"
+    return slug.rstrip("-") or i18n.t("text.slug.fallback")

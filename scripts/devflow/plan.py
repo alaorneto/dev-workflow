@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import i18n
 from .config import BREAKING_SECTION, FALLBACK_SECTION, Config
 from .gh import Git, GitHub, is_trusted_author, label_names
 from .semver import (
@@ -402,11 +403,8 @@ class Collector:
             types = sorted(labels & set(self.cfg.type_labels))
             kind = types[0] if len(types) == 1 else None
             if kind is None:
-                found = ", ".join(f"`{name}`" for name in types) or "nenhum"
-                note = (
-                    f"#{number} (citada por {change.key}) não tem exatamente um label de tipo ({found}): ela não "
-                    "decide o nível nem a seção do changelog. Deixe um só tipo na issue."
-                )
+                found = ", ".join(f"`{name}`" for name in types) or self.cfg.t("plan.none")
+                note = self.cfg.t("plan.note.issue_type", number=number, change=change.key, found=found)
                 if note not in self.notes:
                     self.notes.append(note)
             infos.append(IssueInfo(number, str(data.get("title", "")), kind, number in closing))
@@ -417,32 +415,36 @@ class Collector:
         signals: list[Signal] = []
         for issue in change.issues:
             if issue.type:
-                signals.append(
-                    Signal(cfg.type_level(issue.type), "issue", f"#{issue.number} tem o label `{issue.type}`")
-                )
+                detail = cfg.t("plan.signal.issue", number=issue.number, label=issue.type)
+                signals.append(Signal(cfg.type_level(issue.type), "issue", detail))
         subjects = [(commit.subject, commit.message, commit.sha[:7]) for commit in change.commits]
         if change.kind == "pr":
-            subjects.append((change.title, "", "título do PR"))
+            subjects.append((change.title, "", cfg.t("plan.signal.pr_title")))
         for subject, message, where in subjects:
             conventional = parse_conventional(subject)
             if conventional:
                 level = cfg.data["commits"]["levels"].get(conventional.type, "none")
                 if level != "none":
-                    signals.append(Signal(level, "commit", f"`{conventional.type}` em {where}"))
+                    detail = cfg.t("plan.signal.commit", type=conventional.type, where=where)
+                    signals.append(Signal(level, "commit", detail))
                 if conventional.breaking:
-                    signals.append(Signal("major", "commit", f"`!` em {where}: {conventional.description}", True))
+                    detail = cfg.t("plan.signal.bang", where=where, description=conventional.description)
+                    signals.append(Signal("major", "commit", detail, True))
             for note in breaking_notes(message):
-                signals.append(Signal("major", "commit", f"BREAKING CHANGE em {where}: {note}", True))
+                detail = cfg.t("plan.signal.breaking_commit", where=where, note=note)
+                signals.append(Signal("major", "commit", detail, True))
         if cfg.label("breaking") in change.labels:
-            signals.append(Signal("major", "label", f"label `{cfg.label('breaking')}`", True))
+            signals.append(Signal("major", "label", cfg.t("plan.signal.label", label=cfg.label("breaking")), True))
         for note in breaking_notes(change.body):
-            signals.append(Signal("major", "corpo", f"BREAKING CHANGE no corpo do PR: {note}", True))
+            signals.append(Signal("major", "corpo", cfg.t("plan.signal.breaking_body", note=note), True))
         for hit in change.surfaces:
             if hit.action in LEVELS and hit.action != "none":
-                verb = {"add": "acrescentado", "modify": "alterado", "remove": "removido"}[hit.event]
-                signals.append(
-                    Signal(hit.action, "superficie", f"`{hit.path}` {verb} em «{hit.surface}»", hit.action == "major")
-                )
+                details = {
+                    "add": cfg.t("plan.signal.surface_added", path=hit.path, surface=hit.surface),
+                    "modify": cfg.t("plan.signal.surface_modified", path=hit.path, surface=hit.surface),
+                    "remove": cfg.t("plan.signal.surface_removed", path=hit.path, surface=hit.surface),
+                }
+                signals.append(Signal(hit.action, "superficie", details[hit.event], hit.action == "major"))
         return signals
 
     def _pr_change(self, number: int, sha: str, fallback_title: str) -> Change:
@@ -520,8 +522,7 @@ class Collector:
                 if belongs and whole:
                     dropped.update((index, other_index))
                     self.notes.append(
-                        f"{revert.key} reverte {original.key} ({original.title}) antes da release: os dois saem "
-                        "do cálculo do nível e do changelog."
+                        self.cfg.t("plan.note.reverted", revert=revert.key, original=original.key, title=original.title)
                     )
                     break
         return [change for index, change in enumerate(changes) if index not in dropped]
@@ -567,22 +568,22 @@ class Collector:
 def validate_analysis(data: Any) -> dict[str, Any]:
     """Confere o formato da análise; devolve-a com ``level`` igual ao maior nível das mudanças."""
     if not isinstance(data, dict) or data.get("schema") != 1 or not isinstance(data.get("changes"), list):
-        raise ValueError('A análise precisa de `"schema": 1` e de uma lista `changes`.')
+        raise ValueError(i18n.t("plan.analysis.schema"))
     entries = []
     for index, entry in enumerate(data["changes"]):
         where = f"changes[{index}]"
         if not isinstance(entry, dict):
-            raise ValueError(f"{where} deve ser um objeto.")
+            raise ValueError(i18n.t("plan.analysis.object", where=where))
         pr, commit = entry.get("pr"), entry.get("commit")
         if isinstance(pr, bool) or not (isinstance(pr, int) or (isinstance(commit, str) and len(commit) >= 7)):
-            raise ValueError(f"{where} precisa de `pr` (número) ou `commit` (SHA com 7 caracteres ou mais).")
+            raise ValueError(i18n.t("plan.analysis.reference", where=where))
         if entry.get("level") not in LEVELS:
-            raise ValueError(f"{where}.level deve ser um de {', '.join(LEVELS)}.")
+            raise ValueError(i18n.t("plan.analysis.level", where=where, accepted=", ".join(LEVELS)))
         if not isinstance(entry.get("summary"), str) or not entry["summary"].strip():
-            raise ValueError(f"{where}.summary é obrigatório: uma frase com o motivo do nível.")
+            raise ValueError(i18n.t("plan.analysis.summary", where=where))
         evidence = entry.get("evidence", [])
         if not isinstance(evidence, list) or not all(isinstance(item, str) for item in evidence):
-            raise ValueError(f"{where}.evidence deve ser uma lista de textos.")
+            raise ValueError(i18n.t("plan.analysis.evidence", where=where))
         item: dict[str, Any] = {
             "level": entry["level"],
             "summary": entry["summary"].strip(),
@@ -654,10 +655,7 @@ def apply_analyses(changes: list[Change], analyses: list[dict[str, Any]], repo: 
                     verdict, stale = entry, False
         if verdict is None:
             if stale:
-                notes.append(
-                    f"{change.key}: análise anterior ao último commit do PR; ela não conta e a mudança fica sem "
-                    "análise até uma nova ser registrada."
-                )
+                notes.append(i18n.t("plan.note.stale_analysis", change=change.key))
             continue
         change.signals = [signal for signal in change.signals if signal.source != "agente"]
         change.signals.append(Signal(verdict["level"], "agente", verdict["summary"], bool(verdict["breaking"])))
@@ -703,9 +701,8 @@ def release_override(changes: list[Change], cfg: Config) -> Override | None:
         if len(levels) == 1:
             marker = str(cfg.pr["override_reason_marker"])
             reason = marked_value(section(change.body, cfg.pr["version_section"]), marker)
-            chosen = Override(
-                levels[0], reason or "(motivo não informado)", f"label `{prefix}{levels[0]}` em {change.key}"
-            )
+            source = cfg.t("plan.override.source", label=f"{prefix}{levels[0]}", change=change.key)
+            chosen = Override(levels[0], reason or cfg.t("plan.override.no_reason"), source)
     return chosen
 
 
@@ -809,14 +806,14 @@ def build_plan(
     plan.level = plan.natural
     if plan.level == "none" and changes:
         plan.level = "patch"
-        plan.notes.append("Nenhum sinal pede incremento; uma versão publicada sobe ao menos o patch.")
+        plan.notes.append(cfg.t("plan.note.at_least_patch"))
     if fixed_version is not None:
         plan.version = fixed_version
         plan.prerelease = fixed_version.pre[0] if fixed_version.is_prerelease else None
         return plan
     if not changes:
         if forced:
-            text = "Nada se acumulou desde a última versão; não há o que publicar."
+            text = cfg.t("plan.problem.nothing")
             plan.problems.append(Problem("nothing", text))
         return plan
     plan.notes += request_notes
@@ -828,10 +825,7 @@ def build_plan(
     else:
         target = next_version(base_version, plan.level if plan.level != "none" else "patch", zero_major)
         if base_version.major == 0 and plan.level == "major" and zero_major == "breaking-is-minor":
-            plan.notes.append(
-                "Versão 0.x: a quebra de compatibilidade sobe o minor. Para declarar a API estável e ir a 1.0.0, "
-                f"use o label `{cfg.override_label('major')}` no PR de release."
-            )
+            plan.notes.append(cfg.t("plan.note.zero_major", label=cfg.override_label("major")))
     started = line.floor
     if started and started[1].key() > target.key():
         # O ciclo já publicou pré-releases de um alvo maior: descer faria a versão regredir.
@@ -852,13 +846,10 @@ def build_plan(
                     raised = level
                     break
         if raised:
-            plan.notes.append(f"`{path}` declara o piso {version}: o nível sobe de {plan.level} para {raised}.")
+            plan.notes.append(cfg.t("plan.note.floor_raised", path=path, version=version, old=plan.level, new=raised))
             plan.level, target = raised, next_version(base_version, raised, zero_major)
         else:
-            text = (
-                f"`{path}` declara o piso {version}, maior que a versão {target} que seria publicada. "
-                "Corrija o piso ou classifique a mudança de modo que a versão o alcance."
-            )
+            text = cfg.t("plan.problem.floor", path=path, version=version, target=target)
             plan.problems.append(Problem(f"floor:{path}@{version}", text))
     if started and target.key() > started[1].key():
         plan.notes.append(cfg.t("plan.cycle.target_changed", old=started[1], new=target, tag=started[0]))
@@ -901,10 +892,7 @@ def build_plan(
         key=lambda tag: everything[tag].key(),
     )
     if f"{cfg.tag_prefix}{target}" in everything:
-        text = (
-            f"A tag {cfg.tag_prefix}{target} já existe. Numa branch de manutenção só cabem correções; "
-            "confira a branch e o nível calculado."
-        )
+        text = cfg.t("plan.problem.tag_exists", tag=f"{cfg.tag_prefix}{target}")
         plan.problems.append(Problem("tag-exists", text))
     elif elsewhere:
         # Outra linha já usa este núcleo (o ciclo da branch principal, por exemplo): não se divide um número.
@@ -913,11 +901,7 @@ def build_plan(
     if cfg.versioning["require_analysis"] and not plan.override:
         uncovered = [change.key for change in changes if change.needs_review and not change.analyzed]
         if uncovered:
-            text = (
-                "Mudanças em superfícies públicas sem análise registrada: "
-                + ", ".join(uncovered)
-                + ". Registre a análise (`release.py record-analysis`) ou sobreponha o nível com motivo."
-            )
+            text = cfg.t("plan.problem.analysis_missing", changes=", ".join(uncovered))
             plan.problems.append(Problem("analysis:" + ",".join(uncovered), text))
     return plan
 
@@ -966,7 +950,7 @@ def changelog_entries(changes: Sequence[Change], cfg: Config, links: Links) -> d
             prefix_type = cfg.type_for_prefix(conventional.type) if conventional else None
             if typed:
                 section_id = cfg.type_section(typed[0].type or "")
-                suffix = " — parte de " + ", ".join(links.issue(issue.number) for issue in typed)
+                suffix = " " + cfg.t("plan.changelog.part_of", issues=", ".join(links.issue(i.number) for i in typed))
             else:
                 section_id = cfg.type_section(prefix_type) if prefix_type else FALLBACK_SECTION
                 suffix = ""
@@ -996,7 +980,7 @@ def render_changelog_body(
         lines = entries.get(item["id"])
         if lines and item["id"] not in hidden:
             blocks.append(f"### {item['title']}\n\n" + "\n".join(lines))
-    return "\n\n".join(blocks) or "Sem mudanças visíveis para quem usa o projeto."
+    return "\n\n".join(blocks) or cfg.t("plan.changelog.empty")
 
 
 def render_justification(plan: Plan, cfg: Config, links: Links, *, table_note: str | None = None) -> str:
@@ -1006,19 +990,26 @@ def render_justification(plan: Plan, cfg: Config, links: Links, *, table_note: s
     que o GitHub limita em tamanho.
     """
     lines = []
-    origin = f"{plan.base_tag}" if plan.base_tag else f"{plan.base_version} (versão inicial, sem tag)"
+    origin = f"{plan.base_tag}" if plan.base_tag else cfg.t("plan.origin.initial", version=plan.base_version)
     if plan.version:
-        lines.append(f"**{origin} → {cfg.tag_prefix}{plan.version}** — nível **{plan.level}**.")
+        target = f"{cfg.tag_prefix}{plan.version}"
+        lines.append(cfg.t("plan.justification.headline", origin=origin, target=target, level=plan.level))
     if plan.override:
+        override = plan.override
         lines.append(
-            f"Nível sobreposto para **{plan.override.level}** ({plan.override.source}); o cálculo dava "
-            f"**{plan.natural}**. Motivo: {plan.override.reason}"
+            cfg.t(
+                "plan.justification.override",
+                level=override.level,
+                source=override.source,
+                natural=plan.natural,
+                reason=override.reason,
+            )
         )
     lines += plan.notes
     if plan.changes and table_note is not None:
         lines += ["", table_note]
     elif plan.changes:
-        lines += ["", "| Mudança | Nível | Sinais |", "|---|---|---|"]
+        lines += ["", cfg.t("plan.justification.table_header"), "|---|---|---|"]
         for change in plan.changes:
             signals = "; ".join(
                 f"{s.detail} → {s.level}" for s in change.signals if s.level != "none" or s.source == "agente"
@@ -1026,20 +1017,18 @@ def render_justification(plan: Plan, cfg: Config, links: Links, *, table_note: s
             review = sorted({hit.path for hit in change.surfaces if hit.action == "review"})
             if review and not change.analyzed:
                 shown = ", ".join(f"`{path}`" for path in review[:5]) + (" …" if len(review) > 5 else "")
-                signals += ("; " if signals else "") + f"superfície pública tocada sem análise: {shown}"
+                signals += ("; " if signals else "") + cfg.t("plan.justification.unanalyzed", paths=shown)
             lines.append(
                 f"| {links.change(change)} {change.title.replace('|', '/')} | {change.level} | {signals or '—'} |"
             )
     analyzed = sum(1 for change in plan.changes if change.analyzed)
     lines.append("")
     if analyzed == len(plan.changes) and plan.changes:
-        lines.append("Análise por agente: cobre todas as mudanças.")
+        lines.append(cfg.t("plan.justification.analysis_all"))
     elif analyzed:
-        lines.append(
-            f"Análise por agente: cobre {analyzed} de {len(plan.changes)} mudanças; as demais só têm sinais determinísticos."
-        )
+        lines.append(cfg.t("plan.justification.analysis_some", analyzed=analyzed, total=len(plan.changes)))
     else:
-        lines.append("Análise por agente: ausente; o nível vem só dos sinais determinísticos.")
+        lines.append(cfg.t("plan.justification.analysis_none"))
     return "\n".join(lines).strip()
 
 

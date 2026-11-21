@@ -45,6 +45,45 @@ def defaults(language: str) -> dict[str, Any]:
     return copy.deepcopy(_locale(language).DEFAULTS)
 
 
+# Nomes de seção dos padrões: o nome na mesma posição em cada idioma é o mesmo nome em outra língua.
+_SECTION_DEFAULTS = (
+    ("issues", "items_section"),
+    ("issues", "depends_marker"),
+    ("issues", "acceptance_section"),
+    ("issues", "sections", "default"),
+    ("issues", "sections", "bug"),
+    ("issues", "sections", "documentation"),
+    ("pr", "required_sections"),
+    ("pr", "version_section"),
+    ("pr", "tests_section"),
+    ("pr", "docs_section"),
+    # Não é seção, mas é lido do corpo do PR do mesmo jeito: `Motivo da sobreposição` e `Override reason`.
+    ("pr", "override_reason_marker"),
+)
+
+
+@functools.cache
+def section_groups() -> tuple[frozenset[str], ...]:
+    """Grupos de nomes de seção equivalentes entre os idiomas (``{"Versão", "Version"}``).
+
+    A tabela sai dos padrões de todos os idiomas, posição a posição: um idioma novo entra nela sem
+    mudar nada aqui. Um PR ou uma issue aberta antes de o projeto trocar de idioma continua valendo.
+    """
+    groups: dict[str, frozenset[str]] = {}
+    for path in _SECTION_DEFAULTS:
+        columns = []
+        for language in LANGUAGES:
+            value: Any = defaults(language)
+            for key in path:
+                value = value[key]
+            columns.append(value if isinstance(value, list) else [value])
+        for names in zip(*columns, strict=True):
+            merged = frozenset(names).union(*(groups.get(name, frozenset()) for name in names))
+            for name in merged:
+                groups[name] = merged
+    return tuple(sorted(set(groups.values()), key=sorted))
+
+
 class _Keep(dict):
     """Marcador sem valor continua no texto, em vez de derrubar a formatação."""
 
