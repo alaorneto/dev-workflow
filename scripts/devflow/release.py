@@ -27,6 +27,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
+from . import i18n
 from .config import Config, ConfigError, load
 from .gh import CommandError, Git, GitHub, current_repository, is_trusted_author, utf8_streams
 from .plan import (
@@ -67,6 +68,16 @@ class ReleaseError(RuntimeError):
     """Erro que interrompe a release com mensagem para quem opera."""
 
 
+def _error(cfg: Config, text: object) -> str:
+    """``ERRO: texto`` no idioma do projeto (fora do GitHub Actions)."""
+    return cfg.t("release.error", text=text)
+
+
+def _warning(cfg: Config, text: object) -> str:
+    """``aviso: texto`` no idioma do projeto (fora do GitHub Actions)."""
+    return cfg.t("release.warning", text=text)
+
+
 # O que o git escreve quando o servidor recusa o push por regra, não porque a branch andou.
 PUSH_REFUSED = re.compile(
     r"protected branch|GH006|GH013|permission|denied|\b403\b|not allowed|rule violations", re.IGNORECASE
@@ -79,13 +90,7 @@ def push_refused(stderr: str) -> bool:
 
 def refused_push_message(branch: str, stderr: str) -> str:
     detail = " ".join((stderr or "").split())[:500]
-    return (
-        f"o push do commit de release para `{branch}` foi recusado pelo GitHub (proteção de branch ou permissão "
-        f"do token), não porque a branch andou: {detail}\n"
-        "Duas saídas: `release.mode = \"pull-request\"` na configuração, para a release chegar à branch por um PR; "
-        "ou um segredo `RELEASE_TOKEN` com permissão de escrever nela (por exemplo, de quem pode passar pela "
-        "proteção). Nada foi publicado; rode de novo depois de ajustar."
-    )
+    return i18n.t("release.push.refused", branch=branch, detail=detail)
 
 
 def read_analysis_file(path: str) -> Any:
@@ -93,15 +98,15 @@ def read_analysis_file(path: str) -> Any:
     try:
         text = Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise ReleaseError(f"o arquivo de análise `{path}` não existe.") from None
+        raise ReleaseError(i18n.t("release.analysis.missing", path=path)) from None
     except UnicodeDecodeError:
-        raise ReleaseError(f"o arquivo de análise `{path}` não está em UTF-8.") from None
+        raise ReleaseError(i18n.t("release.analysis.encoding", path=path)) from None
     except OSError as exc:
-        raise ReleaseError(f"não consegui ler o arquivo de análise `{path}`: {exc.strerror or exc}.") from None
+        raise ReleaseError(i18n.t("release.analysis.unreadable", path=path, error=exc.strerror or exc)) from None
     try:
         return json.loads(text)
     except ValueError as exc:
-        raise ReleaseError(f"o arquivo de análise `{path}` não é JSON válido: {exc}.") from None
+        raise ReleaseError(i18n.t("release.analysis.invalid", path=path, error=exc)) from None
 
 
 # --- arquivos de versão ------------------------------------------------------------------------
@@ -144,15 +149,15 @@ def rewrite(text: str, entry: dict[str, Any], current: Version, new: Version) ->
         found = text.count(needle)
         if found != expected:
             raise ReleaseError(
-                f"{entry['path']}: esperava {expected} ocorrência(s) de `{needle}`, encontrei {found}. "
-                "O arquivo divergiu da versão corrente ou o padrão em `versioning.files` está errado."
+                i18n.t("release.files.count", path=entry["path"], expected=expected, needle=needle, found=found)
             )
         return text.replace(needle, replacement)
     pattern = re.compile(expand(entry["regex"], values, escape=True), re.MULTILINE)
     found = len(pattern.findall(text))
     if found != expected:
+        regex = entry["regex"]
         raise ReleaseError(
-            f"{entry['path']}: esperava {expected} ocorrência(s) de /{entry['regex']}/, encontrei {found}."
+            i18n.t("release.files.count_regex", path=entry["path"], expected=expected, regex=regex, found=found)
         )
     replacement = expand(entry["replace"], values)
     return pattern.sub(lambda _match: replacement, text)
@@ -173,11 +178,9 @@ def apply_version_files(
             try:
                 original = path.read_bytes().decode("utf-8")
             except UnicodeDecodeError:
-                raise ReleaseError(
-                    f"{entry['path']}: não está em UTF-8; converta o arquivo (a versão é escrita em UTF-8)."
-                ) from None
+                raise ReleaseError(cfg.t("release.files.encoding", path=entry["path"])) from None
             except OSError as exc:
-                raise ReleaseError(f"{entry['path']}: não consegui ler ({exc}).") from exc
+                raise ReleaseError(cfg.t("release.files.unreadable", path=entry["path"], error=exc)) from exc
             contents[entry["path"]] = (original, original)
         original, text = contents[entry["path"]]
         contents[entry["path"]] = (original, rewrite(text, entry, current, new))
@@ -208,7 +211,7 @@ def check_version_files(cfg: Config, current: Version, *, root: Path | None = No
         drifted = apply_version_files(cfg, current, current, write=False, root=root)
     except ReleaseError as exc:
         return [str(exc)]
-    return [f"{name}: o conteúdo não corresponde à versão {current}." for name in drifted]
+    return [cfg.t("release.files.drift", path=name, version=current) for name in drifted]
 
 
 def tree_latest(cfg: Config, tree: Path) -> tuple[str, Version] | None:
@@ -489,15 +492,15 @@ def release_commit_refusal(session: Session, collector: Collector, commit: Commi
         ours = merge is not None and merge.group("branch") == branch
         if carrier.sha == commit.sha or (ours and (not owner or str(merge.group("owner")).lower() == owner)):
             return None
-        return f"chegou pelo merge {carrier.sha[:7]}, que não é do PR de release (`{branch}` deste repositório)"
+        return cfg.t("release.forged.merge", sha=carrier.sha[:7], branch=branch)
     number = collector.pr_number(carrier)
     if number is None:
         if carrier.sha == commit.sha:
             return None
-        return f"chegou pelo merge {carrier.sha[:7]}, que não é de um PR"
+        return cfg.t("release.forged.not_pr", sha=carrier.sha[:7])
     if cfg.is_release_pull(collector.pull(number)):
         return None
-    return f"chegou pelo PR #{number}, que não é o PR de release (`{branch}` deste repositório)"
+    return cfg.t("release.forged.other_pr", number=number, branch=branch)
 
 
 def find_prepared(session: Session, base_tag: str | None, head: str = "HEAD") -> tuple[str, Version, str] | None:
@@ -526,8 +529,8 @@ def find_prepared(session: Session, base_tag: str | None, head: str = "HEAD") ->
             continue
         refusal = release_commit_refusal(session, collector, commit, f"{base_tag}..{head}" if base_tag else head)
         if refusal:
-            text = f"Commit de release {commit.sha[:7]} ({tag}) ignorado: {refusal}. Nenhuma versão sai dele."
-            print(f"::warning title=Release::{text}" if os.environ.get("GITHUB_ACTIONS") else f"aviso: {text}")
+            text = cfg.t("release.forged.ignored", sha=commit.sha[:7], tag=tag, reason=refusal)
+            print(f"::warning title=Release::{text}" if os.environ.get("GITHUB_ACTIONS") else _warning(cfg, text))
             continue
         for candidate in repo.log(f"{base_tag}..{head}" if base_tag else head, first_parent=True):
             if candidate.sha == commit.sha or session.git.ok("merge-base", "--is-ancestor", commit.sha, candidate.sha):
@@ -570,7 +573,7 @@ def mark_included(session: Session, plan: Plan, tag: str) -> None:
             if milestone is not None and not (github.issue(number) or {}).get("milestone"):
                 github.set_milestone(number, milestone)
         except CommandError as exc:
-            print(f"aviso: não consegui marcar #{number}: {exc}")
+            print(_warning(cfg, cfg.t("release.mark.failed", number=number, error=exc)))
     if milestone is not None:
         github.update_milestone(milestone, {"state": "closed"})
 
@@ -592,7 +595,7 @@ def publish(session: Session, tag: str, version: Version, target: str, plan: Pla
             git(*session.identity(), "tag", "-a", tag, target, "--cleanup=verbatim", "-F", path)
         finally:
             os.unlink(path)
-        print(f"Tag {tag} criada em {target[:7]}.")
+        print(cfg.t("release.tag.created", tag=tag, sha=target[:7]))
     if session.has_remote:
         git("push", REMOTE, f"refs/tags/{tag}")
     if github.enabled:
@@ -611,16 +614,16 @@ def publish(session: Session, tag: str, version: Version, target: str, plan: Pla
                     "make_latest": "true" if latest else "false",
                 }
             )
-            print(f"GitHub Release {tag} criada.")
+            print(cfg.t("release.github.created", tag=tag))
         if not version.is_prerelease:
             mark_included(session, plan, tag)
         workflow = cfg.release["dispatch_workflow"]
         if workflow:
             try:
                 github.dispatch_workflow(workflow, tag, {"version": str(version), "tag": tag})
-                print(f"Workflow {workflow} disparado para {tag}.")
+                print(cfg.t("release.dispatch.done", workflow=workflow, tag=tag))
             except CommandError as exc:
-                print(f"aviso: não consegui disparar {workflow}: {exc}")
+                print(_warning(cfg, cfg.t("release.dispatch.failed", workflow=workflow, error=exc)))
     session.published.append((tag, version))
     _output(released="true", **version_outputs(version, tag))
 
@@ -640,10 +643,10 @@ def open_release_pr(session: Session, plan: Plan) -> None:
     existing = github.open_pulls_from(branch)
     if existing:
         github.update_pull(int(existing[0]["number"]), {"title": title, "body": body})
-        print(f"PR de release #{existing[0]['number']} atualizado para {tag}.")
+        print(cfg.t("release.pr.updated", number=existing[0]["number"], tag=tag))
     else:
         created = github.create_pull({"title": title, "head": branch, "base": plan.branch, "body": body})
-        print(f"PR de release #{(created or {}).get('number', '?')} aberto para {tag}.")
+        print(cfg.t("release.pr.opened", number=(created or {}).get("number", "?"), tag=tag))
     git("reset", "--hard", "HEAD~1")
     assert plan.version is not None
     if not session.published:  # uma versão publicada nesta execução é a que os jobs seguintes recebem
@@ -662,25 +665,22 @@ def reconcile_latest(session: Session) -> None:
     inner = session.repo.log(f"{target}~1..{target}") if session.git.ok("rev-parse", f"{target}~1") else []
     is_release = any(cfg.release_subject_pattern().match(s) for s in [subject, *(c.subject for c in inner)])
     if is_release and github.release_by_tag(tag) is None:
-        print(f"A tag {tag} não tem GitHub Release; concluindo a publicação.")
+        print(cfg.t("release.reconcile", tag=tag))
         publish(session, tag, version, target)
 
 
 def run(session: Session, args: argparse.Namespace) -> int:
     cfg, git = session.cfg, session.git
     if not cfg.versioning_enabled:
-        print("Versionamento desligado em dev-workflow.toml (`versioning.enabled = false`).")
+        print(cfg.t("release.disabled"))
         return 0
     branch = session.branch()
     if not cfg.is_release_branch(branch):
-        print(f"A branch `{branch}` não publica versões (veja `repository.release_branches`).")
+        print(cfg.t("release.branch.not_release", branch=branch))
         return 0
     if branch == cfg.release["pr_branch"]:
         # O nome casa com `release/*`, e um push feito com RELEASE_TOKEN dispara o workflow nela.
-        print(
-            f"A branch `{branch}` é a do PR de release (`release.pr_branch`): a versão sai quando esse PR é "
-            "mesclado, não daqui."
-        )
+        print(cfg.t("release.branch.release_pr", branch=branch))
         _output(released="false")
         return 0
     args.prerelease = (args.prerelease or "").strip().lower()
@@ -691,7 +691,10 @@ def run(session: Session, args: argparse.Namespace) -> int:
         raise ReleaseError(cfg.t("release.channel.unknown", channel=args.prerelease, accepted=", ".join(channels)))
     # Pedir um canal é pedir a publicação: sem isto o disparo manual não fazia nada, em silêncio.
     args.force = args.force or bool(args.prerelease)
-    override = Override(args.level, args.reason or "(motivo não informado)", "execução manual") if args.level else None
+    override = None
+    if args.level:
+        reason = args.reason or cfg.t("release.override.no_reason")
+        override = Override(args.level, reason, cfg.t("release.override.manual"))
     analyses = []
     if args.analysis_file:
         analyses.append(validate_analysis(read_analysis_file(args.analysis_file)))
@@ -703,7 +706,7 @@ def run(session: Session, args: argparse.Namespace) -> int:
         prepared = find_prepared(session, base[0] if base else None)
         if prepared and not args.dry_run:
             tag, version, target = prepared
-            print(f"Commit de release de {tag} sem tag; publicando.")
+            print(cfg.t("release.prepared.publishing", tag=tag))
             publish(session, tag, version, target)
             continue
         plan = build_plan(
@@ -731,14 +734,14 @@ def run(session: Session, args: argparse.Namespace) -> int:
         print(report(plan, cfg, session.links))
         if plan.problems or plan.version is None:
             for problem in plan.problems:
-                print(f"::error title=Release::{problem}" if os.environ.get("GITHUB_ACTIONS") else f"ERRO: {problem}")
+                print(f"::error title=Release::{problem}" if os.environ.get("GITHUB_ACTIONS") else _error(cfg, problem))
             return 1
         if args.dry_run:
             return 0
         drift = check_version_files(cfg, plan.files_version)
         if drift:
             for problem in drift:
-                print(f"ERRO: {problem}")
+                print(_error(cfg, problem))
             return 1
         sha = prepare(session, plan)
         if cfg.release["mode"] == "pull-request":
@@ -749,13 +752,13 @@ def run(session: Session, args: argparse.Namespace) -> int:
             if pushed.returncode != 0 and push_refused(pushed.stderr):
                 raise ReleaseError(refused_push_message(branch, pushed.stderr))
             if pushed.returncode != 0:  # a branch andou: refaz o plano sobre o novo estado
-                print("A branch remota avançou durante a release; recalculando.")
+                print(cfg.t("release.push.moved"))
                 git("fetch", "--tags", REMOTE, branch)
                 git("reset", "--hard", f"{REMOTE}/{branch}")
                 continue
         publish(session, str(plan.tag(cfg)), plan.version, sha, plan)
         return 0
-    print("ERRO: a release não estabilizou; rode de novo e confira o estado da branch.")
+    print(_error(cfg, cfg.t("release.unstable")))
     return 1
 
 
@@ -824,17 +827,17 @@ def report(plan: Plan, cfg: Config, links: Links, *, pr: int | None = None, tabl
             if channels:
                 lines.append(cfg.t("preview.none.channels", labels=channels))
     elif plan.version is None:
-        lines.append(f"Nada acumulado desde {plan.base_tag or 'o início'}.")
+        lines.append(cfg.t("release.report.nothing", base=base))
     else:
-        state = "será publicada" if plan.requested else "seria publicada (nenhum PR pediu versão ainda)"
-        lines.append(f"### Próxima versão: **{tag}** ({plan.level}) — {state}")
+        state = cfg.t("release.report.next.will") if plan.requested else cfg.t("release.report.next.would")
+        lines.append(cfg.t("release.report.next.title", tag=tag, level=plan.level, state=state))
         if plan.requested_by:
-            lines.append(f"Versão pedida por: {', '.join(plan.requested_by)}.")
+            lines.append(cfg.t("release.report.requested_by", changes=", ".join(plan.requested_by)))
     if plan.cycle:
         lines.append(cfg.t("report.cycle", cycle=", ".join(plan.cycle), current=plan.previous_tag))
     lines += ["", render_justification(plan, cfg, links, table_note=table_note)]
     if plan.problems:
-        lines += ["", "**Problemas que impedem a release**", *(f"- {problem}" for problem in plan.problems)]
+        lines += ["", cfg.t("release.report.problems"), *(f"- {problem}" for problem in plan.problems)]
     return "\n".join(lines).strip() + "\n"
 
 
@@ -878,9 +881,9 @@ def check_request(session: Session, args: argparse.Namespace, plan: Plan, collec
     own = [problem for problem in brought if problem not in waiting]
     actions = bool(os.environ.get("GITHUB_ACTIONS"))
     for problem in own:
-        print(f"::error title=Release::{problem}" if actions else f"ERRO: {problem}")
+        print(f"::error title=Release::{problem}" if actions else _error(cfg, problem))
     for problem in [*inherited, *waiting]:
-        print(f"::warning title=Release::{problem}" if actions else f"aviso: {problem}")
+        print(f"::warning title=Release::{problem}" if actions else _warning(cfg, problem))
     if own:
         print(cfg.t("check.request.refused", pr=args.pr, label=labels[0], count=len(own)))
         return 1
@@ -898,7 +901,7 @@ def preview(session: Session, args: argparse.Namespace) -> int:
     if session.repo.current(args.base_ref) is None:
         # Antes da tag de base não há versão de referência: não é erro do PR, e o histórico inteiro
         # não é o que o PR publicaria.
-        print("Sem tag de versão alcançável: a prévia começa depois de `release.py baseline`.")
+        print(cfg.t("release.preview.no_tag"))
         return 0
     collector = Collector(cfg, session.repo, session.github)
     pending = (args.pr, args.head_ref)
@@ -933,7 +936,7 @@ def preview(session: Session, args: argparse.Namespace) -> int:
             else:
                 session.github.add_comment(args.pr, body)
         except CommandError as exc:  # PR de fork: token só de leitura
-            print(f"aviso: não consegui comentar a prévia no PR: {exc}")
+            print(_warning(cfg, cfg.t("release.preview.comment_failed", error=exc)))
     return 0
 
 
@@ -961,45 +964,46 @@ def analysis_comment(data: dict[str, Any]) -> str:
 
 
 def record_analysis(session: Session, args: argparse.Namespace) -> int:
+    cfg = session.cfg
     try:
         data = validate_analysis(read_analysis_file(args.file))
     except (OSError, ValueError, ReleaseError) as exc:
-        print(f"Análise inválida: {exc}", file=sys.stderr)
+        print(cfg.t("release.analysis.refused", error=exc), file=sys.stderr)
         return 1
     if not data["head"] and session.github.enabled:
         # Sem `head`, a análise não diria o que viu e não contaria: vale a ponta atual do PR.
         head = str(((session.github.pull(args.pr) or {}).get("head") or {}).get("sha") or "")
         if head:
             data["head"] = head
-            print(f"A análise não diz o `head` analisado; registrada para a ponta atual do PR ({head[:7]}).")
+            print(cfg.t("release.analysis.head_filled", sha=head[:7]))
     if not data["head"]:
-        print("Aviso: a análise não diz o `head` analisado; ela não vai contar na release.", file=sys.stderr)
+        print(cfg.t("release.analysis.no_head"), file=sys.stderr)
     if args.dry_run or not session.github.enabled:
         print(analysis_comment(data))
         return 0
     session.github.add_comment(args.pr, analysis_comment(data))
-    print(f"Análise gravada no PR #{args.pr}: nível {data['level']}, {len(data['changes'])} mudança(s).")
+    print(cfg.t("release.analysis.recorded", pr=args.pr, level=data["level"], count=len(data["changes"])))
     return 0
 
 
 def baseline(session: Session, args: argparse.Namespace) -> int:
     cfg, git = session.cfg, session.git
     if session.repo.version_tags():
-        print("O repositório já tem tags de versão; a tag de base não é necessária.")
+        print(cfg.t("release.baseline.exists"))
         return 0
     version = Version.parse(str(cfg.versioning["initial_version"]))
     drift = check_version_files(cfg, version)
     if drift:
         for problem in drift:
-            print(f"ERRO: {problem}")
+            print(_error(cfg, problem))
         return 1
     tag = f"{cfg.tag_prefix}{version}"
-    message = f"{tag}\n\nLinha de base do versionamento automático: o que veio antes desta tag é a versão {version}.\n"
+    message = f"{tag}\n\n{cfg.t('release.baseline.message', version=version)}\n"
     git(*session.identity(), "tag", "-a", tag, args.ref, "-m", message)
-    print(f"Tag de base {tag} criada em {git('rev-parse', '--short', args.ref)}.")
+    print(cfg.t("release.baseline.created", tag=tag, sha=git("rev-parse", "--short", args.ref)))
     if args.push and session.has_remote:
         git("push", REMOTE, f"refs/tags/{tag}")
-        print("Tag enviada ao remoto.")
+        print(cfg.t("release.baseline.pushed"))
     return 0
 
 
@@ -1007,21 +1011,19 @@ def baseline(session: Session, args: argparse.Namespace) -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="release.py", description="Versionamento semântico do projeto.")
+    parser = argparse.ArgumentParser(prog="release.py", description=i18n.t("release.cli.description"))
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "plan"):
         command = sub.add_parser(name)
         command.add_argument("--format", choices=("md", "json"), default="md")
         command.add_argument("--ref", default="HEAD")
-        command.add_argument("--pr", type=int, help="inclui um PR aberto como se estivesse mesclado")
-        command.add_argument("--base-ref", help="com --pr: a branch de destino (padrão: origin/<branch padrão>)")
-        command.add_argument("--head-ref", default="HEAD", help="com --pr: a ponta do PR")
+        command.add_argument("--pr", type=int, help=i18n.t("release.cli.pr"))
+        command.add_argument("--base-ref", help=i18n.t("release.cli.base_ref"))
+        command.add_argument("--head-ref", default="HEAD", help=i18n.t("release.cli.head_ref"))
     command = sub.add_parser("next")
     command.add_argument("--level", choices=LEVELS[1:])
     command = sub.add_parser("check")
-    command.add_argument(
-        "--tree", default="", help="confere os arquivos de outra árvore (checkout do PR), com a configuração desta"
-    )
+    command.add_argument("--tree", default="", help=i18n.t("release.cli.tree"))
     command = sub.add_parser("bump")
     command.add_argument("--to", required=True)
     command.add_argument("--dry-run", action="store_true")
@@ -1030,9 +1032,7 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--base-ref", required=True)
     command.add_argument("--head-ref", default="HEAD")
     command.add_argument("--comment", action="store_true")
-    command.add_argument(
-        "--check", action="store_true", help="não comenta: falha se o pedido de versão deste PR não pode ser publicado"
-    )
+    command.add_argument("--check", action="store_true", help=i18n.t("release.cli.check"))
     command = sub.add_parser("record-analysis")
     command.add_argument("--pr", type=int, required=True)
     command.add_argument("--file", required=True)
@@ -1041,10 +1041,10 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--ref", default="HEAD")
     command.add_argument("--push", action="store_true")
     command = sub.add_parser("run")
-    command.add_argument("--force", action="store_true", help="publica o acumulado mesmo sem PR marcado")
+    command.add_argument("--force", action="store_true", help=i18n.t("release.cli.force"))
     command.add_argument("--level", choices=("", *LEVELS[1:]), default="")
     command.add_argument("--reason", default="")
-    command.add_argument("--prerelease", default="", help="canal de pré-release, por exemplo rc; implica --force")
+    command.add_argument("--prerelease", default="", help=i18n.t("release.cli.prerelease"))
     command.add_argument("--analysis-file", default="")
     command.add_argument("--dry-run", action="store_true")
     return parser
@@ -1056,9 +1056,17 @@ def _truthy(name: str) -> bool:
 
 def main(argv: Sequence[str] | None = None) -> int:
     utf8_streams()
+    # A configuração vem antes dos argumentos para a ajuda sair no idioma do projeto; um erro nela
+    # só é dito depois, como antes, para `--help` e argumentos inválidos continuarem respondendo.
+    try:
+        loaded: Config | ConfigError | ValueError = load()
+    except (ConfigError, ValueError) as exc:
+        loaded = exc
     args = _parser().parse_args(argv)
     try:
-        cfg = load()
+        if not isinstance(loaded, Config):
+            raise loaded
+        cfg = loaded
         session = Session(cfg)
         if args.command in ("status", "plan"):
             pending = None
@@ -1086,32 +1094,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             current = latest[1] if latest else Version.parse(str(cfg.versioning["initial_version"]))
             tree = Path(args.tree).resolve() if args.tree else None
             if tree is not None and not tree.is_dir():
-                print(f"ERRO: --tree {args.tree} não é um diretório.")
+                print(_error(cfg, cfg.t("release.check.no_tree", tree=args.tree)))
                 return 1
             where = ""
             own = tree_latest(cfg, tree) if tree is not None else None
             if own:  # a versão de que o PR partiu; a base pode já ter publicado outra
-                latest, current, where = own, own[1], ", a maior alcançável da ponta do PR"
+                latest, current, where = own, own[1], cfg.t("release.check.pr_tip")
             prepared = prepared_release(session, tree, current) if tree is not None else None
             problems = check_version_files(cfg, prepared[1] if prepared else current, root=tree)
             for problem in problems:
-                print(f"ERRO: {problem}")
+                print(_error(cfg, problem))
+            count = len(cfg.versioning["files"])
             if not problems and prepared:
-                print(
-                    f"PR de release ({prepared[0]}): {len(cfg.versioning['files'])} entrada(s) de arquivo coerentes "
-                    f"com a versão {prepared[1]}, que ele publica."
-                )
+                print(cfg.t("release.check.prepared", tag=prepared[0], count=count, version=prepared[1]))
             elif not problems:
-                origin = f"tag {latest[0]}{where}" if latest else "versioning.initial_version (ainda não há tag)"
-                print(
-                    f"{len(cfg.versioning['files'])} entrada(s) de arquivo coerentes com a versão {current} ({origin})."
-                )
+                origin = f"tag {latest[0]}{where}" if latest else cfg.t("release.check.initial")
+                print(cfg.t("release.check.ok", count=count, version=current, origin=origin))
             return 1 if problems else 0
         if args.command == "bump":
             latest = session.repo.current("HEAD")
             current = latest[1] if latest else Version.parse(str(cfg.versioning["initial_version"]))
             changed = apply_version_files(cfg, current, Version.parse(args.to), write=not args.dry_run)
-            print("\n".join(changed) or "Nenhum arquivo mudou.")
+            print("\n".join(changed) or cfg.t("release.bump.none"))
             return 0
         if args.command == "preview":
             return preview(session, args)
@@ -1125,8 +1129,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.reason = args.reason or os.environ.get("RELEASE_REASON", "")
         args.prerelease = args.prerelease or os.environ.get("RELEASE_PRERELEASE", "")
         if args.level not in ("", *LEVELS[1:]):
-            raise ReleaseError(f"Nível inválido: {args.level}.")
+            raise ReleaseError(cfg.t("release.level.invalid", level=args.level))
         return run(session, args)
     except (ConfigError, ReleaseError, CommandError, ValueError) as exc:
-        print(f"ERRO: {exc}", file=sys.stderr)
+        print(i18n.t("release.error", text=exc), file=sys.stderr)
         return 1
