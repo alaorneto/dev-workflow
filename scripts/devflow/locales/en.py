@@ -206,6 +206,187 @@ MESSAGES: dict[str, str] = {
         "PR #{pr}: the `{label}` request cannot be published ({count} problem(s) above). Fix it or remove the label."
     ),
     # === issues.py, text.py, epics.py (#37): as chaves deste módulo ====================================
+    # commit-msg hook
+    "issues.commit_msg.added": "commit-msg: added 'Refs: #{issue}' from the branch {branch}.",
+    "issues.commit_msg.missing": (
+        "commit-msg: the commit must reference a GitHub issue.\n"
+        "  Add a 'Refs #N' trailer (or work on a <prefix>/<N>-<slug> branch, using the prefix of a\n"
+        "  type: {prefixes}). The '(#N)' suffix and 'other/repo#N' do not count.\n"
+        "  No issue yet? Create one first: see the dev-workflow skill."
+    ),
+    # check-pr
+    "check.links.none": (
+        "The PR body references no issue: use `Closes #N` (complete delivery) or `Refs #N` (partial)."
+    ),
+    "check.links.missing": "#{number} does not exist in {repository}.",
+    "check.links.pull_request": "#{number} is a pull request, not an issue.",
+    "check.links.type": "#{number} needs exactly one type label ({types}); found: {found}.",
+    "check.links.no_type": "none",
+    "check.links.only_epics": "The PR references only epics; cite the child issue it delivers (`Closes #N`).",
+    "check.exempt.author": "PR by {author}: exempt from the issue flow.",
+    "check.exempt.release": "Release PR created by the automation: exempt.",
+    "check.closing_list": (
+        "#{number} is in a closing list (`Closes #A, #{number}`), but GitHub only closes the first issue of "
+        "the list: repeat the keyword (`Closes #{number}`) or use `Refs #{number}` if the delivery is partial."
+    ),
+    "check.section.missing": "The PR body has no `## {name}` section (use the PR template).",
+    "check.section.empty": "The `## {name}` section is empty: fill it in or write `Not applicable — reason`.",
+    "check.override.many": "More than one override label ({levels}); keep only one.",
+    "check.override.level": "`{label}` is not major, minor or patch.",
+    "check.override.channels": " or with a channel label ({labels})",
+    "check.override.needs_release": (
+        "`{label}` only applies to a PR labeled `{release}`{also}: the override decides the number of the "
+        "version this PR publishes."
+    ),
+    "check.override.reason": (
+        "Version override without a reason: write `{marker}: <reason>` in the `## {section}` section."
+    ),
+    "check.forged.title": (
+        "The title `{subject}` looks like the release commit, which only the automation creates: it publishes "
+        "no version and disappears from the changelog. Change the text; to publish, use the `{release}` label."
+    ),
+    "check.forged.commit": (
+        "The commit `{subject}` looks like the release commit, which only the automation creates: it publishes "
+        "no version and disappears from the changelog. Change the text; to publish, use the `{release}` label."
+    ),
+    "check.title": (
+        "The title `{title}` does not follow Conventional Commits (`<type>(<scope>): <subject>`); it becomes "
+        "the commit of a squash and goes into the changelog."
+    ),
+    "check.issue.sections": "#{number} is missing template sections: {missing} (use `Not applicable — reason`).",
+    "check.issue.criteria": (
+        "#{number} has {pending} of {total} acceptance criteria unchecked; check the verified ones or record "
+        "the waiver in the issue before merging."
+    ),
+    "check.type_mismatch": (
+        "The title uses `{type}`, but the linked issues are of type {types} "
+        "(expected prefixes: {prefixes}). Check the classification."
+    ),
+    "check.annotation.title": "PR check",
+    "check.annotation.error": "ERROR",
+    "check.annotation.warning": "warning",
+    "check.usage": (
+        "usage: github_issues.py check-pr --pr N (or PR_NUMBER), with GITHUB_REPOSITORY or an authenticated `gh`"
+    ),
+    "check.channels.none": "none",
+    "check.pr.not_found": "PR #{number} not found in {repository}.",
+    "check.done": "PR #{number} checked: {count} warning(s).",
+    # evidence comment (pr-merged)
+    "evidence.delivered.by": "**Delivered by PR #{number}**, merged by @{merged_by}.",
+    "evidence.delivered": "**Delivered by PR #{number}.**",
+    "evidence.partial": (
+        "**Partial delivery by PR #{number}** (the PR cites this issue with `Refs`; it stays open)."
+    ),
+    "evidence.commits": "**Commits**",
+    "evidence.commits.unreadable": "- (the commit list could not be read; see the PR)",
+    "evidence.tests": "Tests run",
+    "evidence.docs": "Documentation",
+    "evidence.declared": "**{label}** (as stated in the PR)",
+    "evidence.not_stated": "- Not stated in the PR.",
+    "evidence.criteria.none": "**Acceptance criteria:** the issue has no criteria list.",
+    "evidence.criteria.pending": "**Acceptance criteria:** {pending} of {total} unchecked at merge time:",
+    "evidence.criteria.pending_hint": (
+        "Check them if they were verified, or reopen the issue and record what is missing."
+    ),
+    "evidence.criteria.done": "**Acceptance criteria:** all {total} checked.",
+    "evidence.version.release": (
+        "**Version:** the PR is labeled for a release; the release automation comments here when the version is out."
+    ),
+    "evidence.version.none": (
+        "**Version:** the PR creates no version; this delivery accumulates and goes into the next published version."
+    ),
+    "issues.merged.not_found": "PR #{number} not found.",
+    "issues.merged.not_merged": "PR #{number} was not merged; nothing to record.",
+    "issues.merged.already": "#{issue}: the evidence from PR #{number} is already recorded.",
+    "issues.merged.recorded": "#{issue}: evidence from PR #{number} recorded.",
+    # start and sync-labels
+    "issues.start.untyped": "#{number} needs exactly one type label ({types}) before it becomes a branch.",
+    "issues.start.not_issue": "#{number} is not an issue of {repository}.",
+    "issues.start.dirty": (
+        "The working tree has changes: commit them, discard them or use another worktree before switching branches."
+    ),
+    "issues.start.exists": "The branch {name} already exists; switched to it.",
+    "issues.start.created": "Branch {name} created from {base}.",
+    "issues.labels.ok": "label {name} ok",
+    "issues.labels.failed": "label {name} ERROR: {error}",
+    # command line
+    "issues.cli.not_a_number": "`{value}` is not an issue number",
+    "issues.cli.description": (
+        "Issues, PRs and epics of the dev-workflow flow. Exit codes: 0 ok, 1 failure, 2 usage or configuration."
+    ),
+    "issues.cli.command": "command",
+    "issues.cli.commit_msg": "git hook: requires a reference to an issue in the message",
+    "issues.cli.commit_msg.file_metavar": "FILE",
+    "issues.cli.commit_msg.file": "the message file that git passes to the hook",
+    "issues.cli.check_pr": "the PR check (link, sections, labels, title)",
+    "issues.cli.pr": "PR number (default: PR_NUMBER)",
+    "issues.cli.pr_merged": "comments the merged PR's evidence on the issues it cites",
+    "issues.cli.start": "creates (or switches to) the issue's <prefix>/<N>-<slug> branch",
+    "issues.cli.start.dry_run": "only prints the branch name",
+    "issues.cli.sync_labels": "creates or updates the labels the flow uses",
+    "issues.cli.sync_epic": "creates sub-issues and 'blocked by' links from the Items section",
+    "issues.cli.all": "every issue with the epic label",
+    "issues.cli.sync_checklist": "sets the checkboxes of the epics' Items section",
+    "issues.cli.parent_of": "the parent epic of issue N",
+    "issues.cli.close_epic": "closes the parent epic when its last child closes",
+    "issues.cli.repository": "could not identify the repository (GITHUB_REPOSITORY, the origin remote or `gh`).",
+    "issues.cli.choose": "{command}: use exactly one of {options}",
+    "issues.cli.choose.epic": "N [N...] or --all",
+    "issues.cli.choose.checklist": "N [N...], --all or --parent-of N",
+    "issues.cli.pr_merged.number": "pr-merged: pass --pr N (or PR_NUMBER)",
+    "issues.error": "ERROR: {error}",
+    # text.py
+    "text.slug.fallback": "work",
+    # epics.py: links
+    "epics.operation.sub_issue": "#{ref} becomes a sub-issue of #{target}",
+    "epics.operation.blocked_by": "#{target} becomes blocked by #{ref}",
+    "epics.item.foreign": "item from another repository ignored: {item}",
+    "epics.item.repeated": "#{number} appears more than once in the list",
+    "epics.item.foreign_dependency": "#{number}: dependency on another repository ignored ({ref})",
+    "epics.item.self_dependency": "#{number} depends on itself",
+    "epics.not_issue": "#{number} does not exist or is not an issue",
+    "epics.lists_itself": "#{epic} lists itself as an item",
+    "epics.other_parent": "#{number} is already a sub-issue of {parent}; parent left unchanged",
+    "epics.missing_dependency": "#{number} depends on #{dep}, which does not exist or is not an issue",
+    "epics.unlisted": "{ref} is a sub-issue of #{epic} but is not in the Items section",
+    "epics.truncated": (
+        "#{number} has more than 100 sub-issues or blockers; the read is incomplete "
+        "and no automatic action is safe."
+    ),
+    "epics.graphql_failed": "gh api graphql failed: {error}",
+    "epics.repository_unreachable": "repository {repository} is not reachable: {error}",
+    # epics.py: checkboxes of the items section
+    "epics.checklist.check": "{prefix}check #{number} in the Items section",
+    "epics.checklist.uncheck": "{prefix}uncheck #{number} in the Items section",
+    "epics.checklist.write_failed": "ERROR updating the Items section of #{epic}: {error}",
+    "epics.checklist.unstable": "ERROR: the Items section of #{epic} did not settle after {attempts} attempts",
+    "epics.checklist.no_parent": "#{issue} is not a sub-issue of an epic in this repository; nothing to do.",
+    # epics.py: automatic closing
+    "epics.close.no_parent": "#{issue} is not a sub-issue of an epic in this repository; nothing to close.",
+    "epics.close.not_epic": "#{parent} does not have the epic label; it is not closed automatically.",
+    "epics.close.already_closed": "#{parent} is already closed.",
+    "epics.close.no_children": "#{parent} has no native sub-issues; nothing to close.",
+    "epics.close.foreign": "#{parent} has sub-issues from another repository ({foreign}); close it by hand.",
+    "epics.close.pending": "#{parent} stays open: {pending} still open.",
+    "epics.close.dry_run": "[dry-run] would close #{parent} as {reason}:\n{comment}",
+    "epics.close.raced": "#{parent} was already closed by another run.",
+    "epics.close.failed": "ERROR closing #{parent}: {error}",
+    "epics.close.done": "#{parent} closed as {reason}.",
+    "epics.close.too_deep": "ERROR: the chain of epics above #{issue} is deeper than {depth} levels.",
+    "epics.summary.head": "Closed automatically by the epic flow: all {count} sub-issues are closed.",
+    "epics.summary.item": "- #{number} {title} — {state}",
+    "epics.summary.completed": "completed",
+    "epics.summary.not_planned": "not planned",
+    "epics.summary.foot": (
+        "If any completion criterion of the epic is still missing, reopen the epic and record what is left."
+    ),
+    # epics.py: sync-epic
+    "epics.sync.not_epic": "#{epic} does not have the epic label",
+    "epics.sync.shared": "#{number} is in more than one epic ({epics}); link it by hand",
+    "epics.sync.summary": "#{epic}: {items} items, {links} links to create",
+    "epics.sync.candidates": ", {count} candidates without an issue",
+    "epics.sync.failed": "ERROR {operation}: {error}",
+    "epics.sync.problem": "mismatch: {problem}",
     # (fim de issues)
     # === config.py, semver.py, gh.py, plan.py (#38): as chaves deste módulo ==============================
     # (fim de plan)
