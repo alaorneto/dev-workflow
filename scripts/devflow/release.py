@@ -36,6 +36,7 @@ from .plan import (
     Links,
     Override,
     Plan,
+    Problem,
     Repo,
     build_plan,
     plan_json,
@@ -352,6 +353,7 @@ class Session:
         self.repo = Repo(cfg, self.git)
         self.github = GitHub(current_repository(self.git))
         self.links = Links(self.github.web)
+        self.published: list[tuple[str, Version]] = []  # o que esta execução publicou
 
     @property
     def has_remote(self) -> bool:
@@ -578,6 +580,7 @@ def publish(session: Session, tag: str, version: Version, target: str, plan: Pla
                 print(f"Workflow {workflow} disparado para {tag}.")
             except CommandError as exc:
                 print(f"aviso: não consegui disparar {workflow}: {exc}")
+    session.published.append((tag, version))
     _output(released="true", **version_outputs(version, tag))
 
 
@@ -602,7 +605,8 @@ def open_release_pr(session: Session, plan: Plan) -> None:
         print(f"PR de release #{(created or {}).get('number', '?')} aberto para {tag}.")
     git("reset", "--hard", "HEAD~1")
     assert plan.version is not None
-    _output(released="false", **version_outputs(plan.version, tag))
+    if not session.published:  # uma versão publicada nesta execução é a que os jobs seguintes recebem
+        _output(released="false", **version_outputs(plan.version, tag))
 
 
 def reconcile_latest(session: Session) -> None:
@@ -671,9 +675,17 @@ def run(session: Session, args: argparse.Namespace) -> int:
             prerelease=args.prerelease or None,
             extra_analyses=analyses,
         )
+        if session.published and args.force and not any(change.fresh for change in plan.changes):
+            # Retomada de uma execução manual que tinha parado no meio (commit de release sem tag,
+            # tag sem GitHub Release): a versão que ela pedia acabou de sair, e nada entrou depois.
+            tag, version = session.published[-1]
+            if channel_of(version) == args.prerelease:
+                print(cfg.t("release.manual.answered", tag=tag))
+                return 0
         if not plan.requested:
             print(nothing_to_release(plan, cfg))
-            _output(released="false")
+            if not session.published:  # sem apagar o `released=true` do que esta execução publicou
+                _output(released="false")
             return 0
         print(report(plan, cfg, session.links))
         if plan.problems or plan.version is None:
@@ -783,12 +795,23 @@ def report(plan: Plan, cfg: Config, links: Links, *, pr: int | None = None, tabl
     return "\n".join(lines).strip() + "\n"
 
 
+def _problem_key(problem: str) -> str:
+    """A chave de um problema do plano; o próprio texto quando ele não traz uma."""
+    return problem.key if isinstance(problem, Problem) else problem
+
+
 def check_request(session: Session, args: argparse.Namespace, plan: Plan, collector: Collector) -> int:
     """``preview --check``: reprova o PR quando o pedido de versão **dele** não pode ser publicado.
 
     Sem label de versão o PR não pede nada, e não há o que reprovar. Com label, o plano é refeito
     sem o PR, pedindo o mesmo tipo de versão: um problema que já existe sem ele (um piso que o
-    acumulado não alcança, por exemplo) não é dele, e só os que aparecem com ele contam.
+    acumulado não alcança, por exemplo) não é dele, e só os que aparecem com ele contam. Os
+    problemas são comparados pela chave (``Problem.key``), porque o texto cita a versão alvo, que
+    muda com o PR.
+
+    A análise de versão que falta por causa do PR também não reprova: ela se resolve com um
+    comentário no PR, que não dispara o check de novo, e o PR ficaria vermelho depois de
+    resolvido. O aviso aparece, e a release para até a análise ser registrada.
     """
     cfg = session.cfg
     current = next((change for change in plan.changes if change.number == args.pr), None)
@@ -805,20 +828,25 @@ def check_request(session: Session, args: argparse.Namespace, plan: Plan, collec
         prerelease=plan.prerelease,
         collector=collector,
     )
-    own = [problem for problem in plan.problems if problem not in before.problems]
-    inherited = [problem for problem in plan.problems if problem in before.problems]
+    known = {_problem_key(problem) for problem in before.problems}
+    inherited = [problem for problem in plan.problems if _problem_key(problem) in known]
+    brought = [problem for problem in plan.problems if _problem_key(problem) not in known]
+    waiting = [problem for problem in brought if _problem_key(problem).startswith("analysis:")]
+    own = [problem for problem in brought if problem not in waiting]
     actions = bool(os.environ.get("GITHUB_ACTIONS"))
     for problem in own:
         print(f"::error title=Release::{problem}" if actions else f"ERRO: {problem}")
-    for problem in inherited:
+    for problem in [*inherited, *waiting]:
         print(f"::warning title=Release::{problem}" if actions else f"aviso: {problem}")
     if own:
         print(cfg.t("check.request.refused", pr=args.pr, label=labels[0], count=len(own)))
         return 1
+    if waiting:
+        print(cfg.t("check.request.analysis", pr=args.pr, label=labels[0]))
     if inherited:
         print(cfg.t("check.request.inherited", pr=args.pr, label=labels[0], count=len(inherited)))
-        return 0
-    print(cfg.t("check.request.ok", pr=args.pr, label=labels[0], tag=plan.tag(cfg)))
+    if not (waiting or inherited):
+        print(cfg.t("check.request.ok", pr=args.pr, label=labels[0], tag=plan.tag(cfg)))
     return 0
 
 

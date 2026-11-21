@@ -143,6 +143,10 @@ MESSAGES: dict[str, str] = {
         "Nada a versionar: {count} mudança(s) acumulada(s) desde {base}, {fresh} depois de {previous}; "
         "nenhuma destas em PR com label de versão ({labels})."
     ),
+    "release.manual.answered": (
+        "O pedido desta execução manual foi atendido por {tag}, que acabou de ser publicada; "
+        "nada entrou depois dela."
+    ),
     "report.cycle": "Ciclo de pré-releases em andamento: {cycle}. Versão corrente: {current}.",
     # --- notas da versão -----------------------------------------------------------------------
     "notes.news.title": "Novidades desde {previous}",
@@ -185,6 +189,10 @@ MESSAGES: dict[str, str] = {
     "check.request.inherited": (
         "PR #{pr}: o pedido `{label}` esbarra em {count} problema(s) que já existem sem este PR (acima). O check "
         "não o reprova por eles, mas a release para até serem resolvidos."
+    ),
+    "check.request.analysis": (
+        "PR #{pr}: o pedido `{label}` aguarda a análise de versão (aviso acima). O check não reprova por isso, "
+        "porque registrar a análise não o dispara de novo; a release para até ela ser registrada."
     ),
     "check.request.refused": (
         "PR #{pr}: o pedido `{label}` não pode ser publicado ({count} problema(s) acima). Corrija ou retire o label."

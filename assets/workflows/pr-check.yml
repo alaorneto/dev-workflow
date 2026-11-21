@@ -61,6 +61,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           script="__SKILL_DIR__/scripts/release.py"
@@ -68,7 +69,11 @@ jobs:
           if ! python3 "$script" preview --help | grep -q -- "--check"; then echo "A branch base ainda não confere o pedido de versão; a verificação vale a partir do merge que a traz."; exit 0; fi
           # Os commits do PR vêm do checkout em .pr-head, que também existe para forks; nada dele é executado.
           git fetch --quiet --no-tags ./.pr-head "+HEAD:refs/dev-workflow/pr-head"
-          python3 "$script" preview --pr "$PR_NUMBER" --base-ref "$BASE_SHA" --head-ref refs/dev-workflow/pr-head --check
+          # O SHA de base do evento pode ficar atrás da branch de destino, que anda sem o PR mudar:
+          # o plano é feito sobre a ponta atual dela, que o checkout com fetch-depth 0 já trouxe.
+          base="refs/remotes/origin/$BASE_REF"
+          git rev-parse --verify --quiet "$base^{commit}" >/dev/null || base="$BASE_SHA"
+          python3 "$script" preview --pr "$PR_NUMBER" --base-ref "$base" --head-ref refs/dev-workflow/pr-head --check
 
   version-preview:
     name: Prévia da versão
@@ -90,9 +95,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           script="__SKILL_DIR__/scripts/release.py"
           if [ ! -f "$script" ]; then echo "A branch base ainda não tem o skill; sem prévia."; exit 0; fi
-          python3 "$script" preview --pr "$PR_NUMBER" --base-ref "$BASE_SHA" --head-ref "$HEAD_SHA" --comment
+          # O SHA de base do evento pode ficar atrás da branch de destino, que anda sem o PR mudar:
+          # o plano é feito sobre a ponta atual dela, que o checkout com fetch-depth 0 já trouxe.
+          base="refs/remotes/origin/$BASE_REF"
+          git rev-parse --verify --quiet "$base^{commit}" >/dev/null || base="$BASE_SHA"
+          python3 "$script" preview --pr "$PR_NUMBER" --base-ref "$base" --head-ref "$HEAD_SHA" --comment

@@ -146,6 +146,10 @@ MESSAGES: dict[str, str] = {
         "Nothing to release: {count} change(s) accumulated since {base}, {fresh} after {previous}; "
         "none of these in a PR with a version label ({labels})."
     ),
+    "release.manual.answered": (
+        "The request of this manual run was answered by {tag}, which has just been published; "
+        "nothing came in after it."
+    ),
     "report.cycle": "Pre-release cycle in progress: {cycle}. Current version: {current}.",
     # --- release notes -------------------------------------------------------------------------
     "notes.news.title": "New since {previous}",
@@ -154,7 +158,9 @@ MESSAGES: dict[str, str] = {
     ),
     "notes.accumulated.title": "Everything since {base}",
     # --- preview and check of the version request ----------------------------------------------
-    "preview.prerelease.title": "### Version preview: when merged, this PR publishes the pre-release **{tag}** ({level})",
+    "preview.prerelease.title": (
+        "### Version preview: when merged, this PR publishes the pre-release **{tag}** ({level})"
+    ),
     "preview.prerelease.body": (
         "It includes this PR and {others} change(s) accumulated since {base}. It is a test version of the "
         "`{channel}` channel: the changelog and the comments on the issues wait for the final version, requested "
@@ -190,6 +196,11 @@ MESSAGES: dict[str, str] = {
     "check.request.inherited": (
         "PR #{pr}: the `{label}` request runs into {count} problem(s) that already exist without this PR (above). "
         "The check does not fail for them, but the release stops until they are solved."
+    ),
+    "check.request.analysis": (
+        "PR #{pr}: the `{label}` request is waiting for the version analysis (warning above). The check does "
+        "not fail for it, because recording the analysis does not run the check again; the release stops "
+        "until it is recorded."
     ),
     "check.request.refused": (
         "PR #{pr}: the `{label}` request cannot be published ({count} problem(s) above). Fix it or remove the label."
