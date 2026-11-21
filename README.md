@@ -243,7 +243,9 @@ The version is in `VERSION` and follows SemVer: a breaking change is anything th
 ## Developing
 
 ```bash
-python3 -m unittest discover -s tests          # the whole suite (a few minutes: end-to-end tests with git)
+python3 tests/run.py                          # the whole suite in parallel, one process per core (about 3 minutes)
+python3 tests/run.py -p "test_units.py"       # one file; -k <text> picks tests by name, -j 1 runs them in series
+python3 -m unittest discover -s tests         # the same suite with plain unittest, in series (much slower)
 python3 scripts/bootstrap.py doctor            # this repository checked by its own skill
 python3 -m pip install ruff==0.17.6 mypy==2.4.1  # the versions pinned in the self-test workflow
 python3 -m ruff check .                        # lint, configured in ruff.toml

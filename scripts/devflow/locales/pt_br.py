@@ -501,6 +501,7 @@ MESSAGES: dict[str, str] = {
     ),
     "plan.justification.analysis_none": "Análise por agente: ausente; o nível vem só dos sinais determinísticos.",
     "config.changelog.hide": "tem `{hidden}`, que não é id de `changelog.sections` ({accepted}).",
+    "gh.module.load": "{env}: não consegui carregar {path}.",
     # (fim de plan)
     # === release.py (#39): as chaves deste módulo =====================================================
     # --- execução: mensagens de quem opera -------------------------------------------------------

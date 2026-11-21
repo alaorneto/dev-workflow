@@ -513,6 +513,7 @@ MESSAGES: dict[str, str] = {
     ),
     "plan.justification.analysis_none": "Agent analysis: missing; the level comes only from deterministic signals.",
     "config.changelog.hide": "has `{hidden}`, which is not an id of `changelog.sections` ({accepted}).",
+    "gh.module.load": "{env}: could not load {path}.",
     # (fim de plan)
     # === release.py (#39): as chaves deste módulo =====================================================
     # --- run: messages for whoever operates it ---------------------------------------------------
