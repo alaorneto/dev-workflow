@@ -15,14 +15,15 @@ O que ele faz:
 
 | Passo | Resultado |
 |---|---|
-| Copia o skill para `.claude/skills/dev-workflow/` se estiver fora do repositório, sem `.git/` e `.github/` do repositório do skill | Os workflows do CI chamam os scripts de lá; por isso o skill é versionado junto com o projeto. `bootstrap.py version` diz qual versão está instalada |
+| Copia o skill para `.claude/skills/dev-workflow/` (ou para `--skill-dir`) se estiver fora do repositório, sem `.git/` e `.github/` do repositório do skill | Os workflows do CI chamam os scripts de lá; por isso o skill é versionado junto com o projeto. `bootstrap.py version` diz qual versão está instalada |
 | Detecta a branch padrão e os arquivos de versão (`pyproject.toml`, `package.json`, `Cargo.toml`, `VERSION`, `pubspec.yaml`, `mix.exs`, `build.gradle`, `Directory.Build.props`…) | `.github/dev-workflow.toml` com `initial_version` e `[[versioning.files]]` preenchidos |
 | Gera os workflows a partir dos modelos | `.github/workflows/pr-check.yml`, `pr-merged.yml`, `release.yml`, `epic-checklist.yml`, `semver-analysis.yml` |
 | Copia os modelos | `.github/ISSUE_TEMPLATE/*.yml`, `.github/pull_request_template.md` |
 | Instala o hook `commit-msg` | `.git/hooks/commit-msg`; se o projeto usa pre-commit, mostra o trecho a acrescentar |
+| Grava o manifesto | `.github/dev-workflow-manifest.json`: versão, caminho do skill e hash de cada arquivo gerado. É por ele que `update` e `uninstall` reconhecem o que não foi editado |
 | Cria os labels | Tipos, `epic`, `release`, `release:alpha|beta|rc` (um por canal de pré-release), `breaking-change`, `semver:major|minor|patch` |
 
-Opções: `--default-branch`, `--initial-version`, `--no-labels`, `--selftest` (instala também o workflow que roda a suíte do skill), `--dry-run`, `--force` (troca arquivos que já existem; sem ele, nada existente é sobrescrito).
+Opções: `--skill-dir` (onde copiar o skill, relativo à raiz, por exemplo `.agents/skills/dev-workflow`; os workflows e o hook apontam para lá, e o `update` mantém), `--default-branch`, `--initial-version`, `--no-labels`, `--selftest` (instala também o workflow que roda a suíte do skill), `--dry-run`, `--force` (troca arquivos que já existem; sem ele, nada existente é sobrescrito).
 
 ## 2. Ajustar a configuração
 
@@ -33,11 +34,11 @@ Abra `.github/dev-workflow.toml` ([referência](configuration.md)) e confira:
 - `[types]`: os tipos e o nível que cada um pede.
 - `release.mode`: `direct`, ou `pull-request` se a branch padrão exige PR.
 
-Depois: `python3 S/bootstrap.py doctor`.
+Depois: `python3 S/bootstrap.py doctor`. Ele confere a configuração, o Python (3.11+, inclusive o que o hook `commit-msg` vai achar no PATH), o conteúdo do hook (desatualizado: `bootstrap.py install-hook` renova), os hooks do Claude Code se configurados (caminho e `node`), o manifesto e os workflows: além de comparar com o modelo, aponta o que contradiz a configuração (scripts chamados em outro caminho, branch padrão fora do `release.yml`, labels de versão que a análise por agente não reconhece).
 
 ## 3. Commitar e mesclar
 
-Os workflows só passam a valer quando estão na branch padrão. Commite tudo que o `init` gerou (inclusive `.claude/skills/dev-workflow/`) e mescle.
+Os workflows só passam a valer quando estão na branch padrão. Commite tudo que o `init` gerou (inclusive a cópia do skill e `.github/dev-workflow-manifest.json`) e mescle.
 
 Cada pessoa instala o hook no próprio checkout, uma vez: `python3 S/bootstrap.py install-hook` (ou `pre-commit install`).
 
@@ -123,12 +124,26 @@ python3 .claude/skills/dev-workflow/scripts/bootstrap.py doctor
 
 | O que | Comportamento |
 |---|---|
-| Cópia em `.claude/skills/dev-workflow/` | Espelhada: arquivos novos entram, os que saíram da versão nova são removidos |
-| Workflows, formulários de issue e modelo de PR | Os iguais ao modelo da versão anterior recebem o modelo novo; os personalizados ficam como estão, com aviso (`--force` troca). Opcional ausente (`semver-analysis.yml`, autoteste) continua ausente |
+| Cópia do skill | No caminho registrado no manifesto (`.claude/skills/dev-workflow/` sem ele). Trocada inteira: arquivos novos entram, os que saíram da versão nova são removidos |
+| Workflows, formulários de issue e modelo de PR | Não editado recebe o modelo novo: o hash bate com o do manifesto, mesmo que a configuração (label, branch) tenha mudado o que o modelo renderiza. Os personalizados ficam como estão, com aviso (`--force` troca). Opcional ausente (`semver-analysis.yml`, autoteste) continua ausente |
+| Arquivo que a versão nova deixou de gerar | Removido se não foi editado; personalizado fica, com aviso |
+| Hook `commit-msg` deste checkout | Renovado se é o do skill; hook de outra origem não é tocado. Os outros checkouts renovam com `bootstrap.py install-hook` |
+| `.github/dev-workflow-manifest.json` | Reescrito com a versão nova e os hashes do que foi gerado |
 | `.github/dev-workflow.toml` | Nunca é trocado. Chave nova tem padrão; chave removida aparece como erro no `doctor` |
 | Versão mais antiga que a instalada | Recusada sem `--force` |
 
-Rodar o `update` a partir da cópia instalada é recusado: ela não é uma versão nova. Commite o resultado numa branch de issue (`chore`), como qualquer mudança; os workflows novos valem depois do merge.
+É tudo ou nada: a cópia nova é montada ao lado antes de tocar no projeto, e uma falha no meio (disco, permissão) devolve a cópia anterior e os arquivos como estavam. Projeto instalado antes do manifesto não tem como saber o que foi gerado: o `update` compara com o modelo da versão instalada renderizado com a configuração de hoje (se ela mudou, o arquivo parece personalizado) e grava o manifesto, que vale a partir do próximo.
+
+Rodar o `update` a partir da cópia instalada é recusado: ela não é uma versão nova. Commite o resultado numa branch de issue (`chore`), como qualquer mudança; os workflows novos valem depois do merge. Mudou só a configuração (label de release, branch padrão)? Rode o `update` a partir do clone da mesma versão: ele regenera o que não foi editado.
+
+## Desinstalar
+
+```bash
+python3 .claude/skills/dev-workflow/scripts/bootstrap.py uninstall        # lista o que sai e o que fica
+python3 .claude/skills/dev-workflow/scripts/bootstrap.py uninstall --yes  # remove
+```
+
+Sai o que o fluxo gerou e não foi editado (pelo hash do manifesto ou, sem ele, pela comparação com o modelo): a cópia do skill, os workflows, os formulários de issue, o modelo de PR, a configuração se ainda é a que o `init` gerou, o manifesto e o hook `commit-msg` deste checkout. Fica, listado: o que foi personalizado, a configuração editada, o trecho do pre-commit e os hooks do Claude Code (tire à mão), os labels no GitHub, as tags de versão e o changelog, que são o histórico. No repositório do próprio skill, o skill fica. Commite a remoção numa branch de issue.
 
 ## Conferir que funciona
 
