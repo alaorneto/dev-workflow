@@ -81,9 +81,12 @@ Acrescente em `.claude/settings.json` do projeto:
 | Pedido no modo de planejamento, ou o agente entra nele | Carregar o skill antes de planejar; o plano termina com "Itens do GitHub" |
 | Pedido que fala de issue, PR, commit, branch, merge, versão, release, tag, changelog ou plano | Carregar o skill antes de agir (perguntas sem mudança de arquivo não precisam) |
 | Plano aceito | Criar as issues e o epic antes de qualquer edição |
-| `git commit --no-verify`, commit sem o hook `commit-msg` instalado, PR sem `Closes`/`Refs #N` | Comando recusado, com a instrução |
+| `git commit --no-verify`/`-n`, `git -c core.hooksPath=… commit`, commit sem o hook `commit-msg` instalado num repositório que adotou o fluxo | Comando recusado, com a instrução |
+| `gh pr create`/`gh pr new` com `--fill` sem corpo, ou com corpo sem `Closes`/`Refs #N` | Comando recusado, com a instrução |
 
-São lembretes e guardas de texto; as barreiras são o hook `commit-msg` e o check do PR.
+O comando é separado em argumentos como o shell faria: aspas e escapes são respeitados, e cada trecho de `;`, `&&`, `||` e `|` é conferido sozinho. Por isso `git commit -m "remove -n flag"` passa e `git commit -m "a;b" --no-verify` é recusado. O corpo do PR vem de `-b`/`--body`, de `-F`/`--body-file arquivo` (ou `--body-file=arquivo`) ou, com `--body-file -`, do heredoc, do `< arquivo` ou do comando ligado por `|`. O repositório adotou o fluxo quando o `HEAD` versiona `.github/dev-workflow.toml`, `dev-workflow.toml` ou `.dev-workflow.toml`.
+
+São lembretes e guardas de texto; as barreiras são o hook `commit-msg` e o check do PR. Um erro interno do hook nunca bloqueia o comando.
 
 ## 6. Normas do projeto
 
