@@ -37,8 +37,8 @@ class ConfigValidationGapsTest(unittest.TestCase):
             "commits.levels.feat": {"commits": {"levels": {"feat": "huge"}}},
             "pr.title_pattern": {"pr": {"title_pattern": "(unclosed"}},
             "versioning.zero_major": {"versioning": {"zero_major": "loose"}},
-            "versioning.files[0].path": {"versioning": {"files": [{"search": "x"}]}},
-            "versioning.files[0].count": {"versioning": {"files": [{"path": "a", "search": "x", "count": 0}]}},
+            "versioning.files[0].path": {"versioning": {"files": [{"search": "{current}"}]}},
+            "versioning.files[0].count": {"versioning": {"files": [{"path": "a", "search": "{current}", "count": 0}]}},
             "versioning.public_surfaces[0].globs": {"versioning": {"public_surfaces": [{"name": "api"}]}},
             "versioning.public_surfaces[0].on_add": {
                 "versioning": {"public_surfaces": [{"globs": ["api/**"], "on_add": "explode"}]}
@@ -59,7 +59,7 @@ class ConfigValidationGapsTest(unittest.TestCase):
         for value in ("2", 1.5, -1):
             with self.subTest(value):
                 self.assertRefused(
-                    {"versioning": {"files": [{"path": "a", "search": "x", "count": value}]}}, "versioning.files[0].count"
+                    {"versioning": {"files": [{"path": "a", "search": "{current}", "count": value}]}}, "versioning.files[0].count"
                 )
 
     def test_an_invalid_floor_regex_is_refused_with_the_key(self):
@@ -95,12 +95,10 @@ class ConfigValidationGapsTest(unittest.TestCase):
     # Defeito encontrado (não corrigido aqui, regra da #34): `changelog.hide` não é validado. Um id
     # que não existe em `changelog.sections` (erro de digitação) é aceito e não esconde nada, ao
     # contrário de `types.<tipo>.section`, que é conferido contra os mesmos ids.
-    @unittest.expectedFailure
     def test_changelog_hide_with_an_unknown_section_id_is_refused(self):
         self.assertRefused({"changelog": {"hide": ["maintenence"]}}, "changelog.hide")
 
     # Mesmo defeito: um texto no lugar da lista vira um conjunto de letras e também não esconde nada.
-    @unittest.expectedFailure
     def test_changelog_hide_as_a_string_is_refused(self):
         self.assertRefused({"changelog": {"hide": "maintenance"}}, "changelog.hide")
 

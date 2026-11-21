@@ -164,6 +164,27 @@ class CommandFailureTest(SandboxCase):
         self.assertReadable(completed, "nao-existe.json", "não existe")
 
 
+class FlakyGitHubTest(SandboxCase):
+    def test_a_release_survives_a_passing_502_on_a_read(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT, labels=["release"])
+        box.update_state(lambda state: state.__setitem__("failures", {"GET pulls/10": [502]}))
+        out = self.assertRan(box.release())
+        self.assertIn("v1.3.0", out)
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0"])
+        self.assertEqual(box.state()["failures"]["GET pulls/10"], [])
+
+    def test_a_comment_is_not_repeated_after_a_502(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT, labels=["release"])
+        box.update_state(lambda state: state.__setitem__("failures", {"POST issues/10/comments": [502]}))
+        out = self.assertRan(box.release())  # marcar é complemento: a versão sai e o aviso diz o que faltou
+        self.assertIn("não consegui marcar #10", out)
+        self.assertIn("HTTP 502 em POST repos/acme/demo/issues/10/comments", out)
+        self.assertEqual(box.state()["log"].count("POST issues/10/comments"), 1)
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0"])
+
+
 class RefusedPushTest(SandboxCase):
     def test_a_push_refused_by_branch_protection_stops_in_the_first_round(self):
         box = self.box

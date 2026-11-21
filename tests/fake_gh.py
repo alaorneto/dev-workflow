@@ -335,6 +335,15 @@ def main(argv):
     with open(state_path, encoding="utf-8") as file:
         state = json.load(file)
     state.setdefault("log", []).append(f"{method} {path}")
+    # Falhas programadas por rota: ``state["failures"]["GET pulls/10"] = [502, 503]`` faz as duas
+    # próximas chamadas a essa rota falharem com esses status, como um GitHub instável.
+    planned = state.get("failures", {}).get(f"{method} {path}")
+    if planned:
+        status = planned.pop(0)
+        with open(state_path, "w", encoding="utf-8") as file:
+            json.dump(state, file, ensure_ascii=False, indent=1)
+        sys.stderr.write(f"gh: Server Error (HTTP {status})\n")
+        return 1
     query = parse_qs(parts.query)
     result = handle(method, path, query, body, state, slug[1] if slug else "")
     if not isinstance(result, SystemExit):
