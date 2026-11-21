@@ -2,6 +2,32 @@
 
 As versões depois da tag de base são escritas pelo workflow de release (`scripts/release.py run`): não edite as seções de versão à mão.
 
+## [1.1.0](https://github.com/alaorneto/dev-workflow/compare/v1.0.4...v1.1.0) — 2026-11-21
+
+### ⚠ Mudanças incompatíveis
+
+- **release:** pre-release channels requested by a PR label (alpha, beta, rc) (PR [#47](https://github.com/alaorneto/dev-workflow/pull/47)) — Acrescenta pré-releases pedidas por label (`release:alpha`, `release:beta`, `release:rc`), a chave `language` e o canal nas saídas e nos marcadores; `run --prerelease` deixa de aceitar canal fora de `versioning.prerelease.channels` (padrão alpha, beta, rc), o que quebra o disparo manual de quem usava outro nome. Dúvida entre minor e major: a quebra só atinge esse disparo e se resolve declarando a lista na configuração.
+
+### Funcionalidades
+
+- Escolher o idioma na configuração: chave language, catálogo e padrões ([#12](https://github.com/alaorneto/dev-workflow/issues/12)) — PR [#47](https://github.com/alaorneto/dev-workflow/pull/47)
+- Tornar os canais de pré-release uma lista ordenada e configurável ([#14](https://github.com/alaorneto/dev-workflow/issues/14)) — PR [#47](https://github.com/alaorneto/dev-workflow/pull/47)
+- Publicar pré-release pedida por label no PR ([#15](https://github.com/alaorneto/dev-workflow/issues/15)) — PR [#47](https://github.com/alaorneto/dev-workflow/pull/47)
+
+### Melhorias
+
+- Escrever notas e changelog de pré-release sem repetição ([#16](https://github.com/alaorneto/dev-workflow/issues/16)) — PR [#47](https://github.com/alaorneto/dev-workflow/pull/47)
+- Expor o canal nas saídas do workflow e nos marcadores de arquivo ([#17](https://github.com/alaorneto/dev-workflow/issues/17)) — PR [#47](https://github.com/alaorneto/dev-workflow/pull/47)
+
+### Correções
+
+- Impedir que a pré-release regrida de canal ou publique abaixo do ciclo em andamento ([#13](https://github.com/alaorneto/dev-workflow/issues/13)) — PR [#47](https://github.com/alaorneto/dev-workflow/pull/47)
+- Corrigir as falhas apontadas na revisão dos canais de pré-release ([#48](https://github.com/alaorneto/dev-workflow/issues/48)) — PR [#49](https://github.com/alaorneto/dev-workflow/pull/49)
+
+### Manutenção
+
+- Avaliar a escolha do canal e o encerramento do ciclo ([#18](https://github.com/alaorneto/dev-workflow/issues/18)) — PR [#47](https://github.com/alaorneto/dev-workflow/pull/47)
+
 ## [1.0.4](https://github.com/alaorneto/dev-workflow/compare/v1.0.3...v1.0.4) — 2026-11-20
 
 ### Correções
