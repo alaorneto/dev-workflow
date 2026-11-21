@@ -47,7 +47,7 @@ from .i18n import t, translate
 from .plan import Repo
 from .release import ReleaseError, check_version_files
 from .semver import Version
-from .text import normalize_title, sections
+from .text import find_section, sections
 
 SKILL = Path(__file__).resolve().parents[2]
 ASSETS = SKILL / "assets"
@@ -1194,7 +1194,7 @@ def doctor(_args: argparse.Namespace) -> int:
         template_text = None
     if template_text is not None:
         present = sections(template_text)
-        missing = [name for name in cfg.pr["required_sections"] if normalize_title(name) not in present]
+        missing = [name for name in cfg.pr["required_sections"] if find_section(present, name) is None]
         if missing:
             report.error(t("bootstrap.doctor.template_sections", missing=", ".join(missing)))
 
