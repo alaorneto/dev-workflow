@@ -1,19 +1,28 @@
 """Instalação e conferência do fluxo num projeto (``bootstrap.py <subcomando>``).
 
-- ``init [--skill-dir D] [--default-branch B] [--initial-version V] [--force] [--no-labels] [--dry-run]``:
-  gera a configuração, os workflows, os modelos de issue e de PR e instala o hook ``commit-msg``. Se
-  o skill estiver fora do repositório, copia-o para ``--skill-dir`` (padrão
+- ``init [--skill-dir D] [--language L] [--default-branch B] [--initial-version V] [--force] [--no-labels]
+  [--dry-run]``: gera a configuração, os workflows, os modelos de issue e de PR e instala o hook
+  ``commit-msg``. Se o skill estiver fora do repositório, copia-o para ``--skill-dir`` (padrão
   ``.claude/skills/dev-workflow``; o CI precisa dos scripts versionados). Arquivos que já existem só
-  são trocados com ``--force``. Grava o manifesto (``.github/dev-workflow-manifest.json``).
+  são trocados com ``--force``. ``--language`` grava a chave ``language`` e gera tudo nesse idioma;
+  num projeto que já tem configuração, tem de ser o idioma dela. Grava o manifesto
+  (``.github/dev-workflow-manifest.json``).
 - ``update [--force] [--dry-run]``: rodado a partir da versão nova do skill (fora do projeto),
   troca a cópia no caminho registrado no manifesto, regenera os workflows e modelos que não foram
-  personalizados, remove os que a versão nova deixou de gerar e renova o hook. Tudo ou nada: uma
-  falha no meio devolve a cópia e os arquivos anteriores. A configuração do projeto nunca é tocada.
+  personalizados (no idioma da configuração), remove os que a versão nova deixou de gerar e renova
+  o hook. Tudo ou nada: uma falha no meio devolve a cópia e os arquivos anteriores. A configuração
+  do projeto nunca é tocada.
 - ``uninstall [--yes]``: lista o que sai (o que não foi personalizado) e o que fica; com ``--yes``,
   remove.
 - ``install-hook``: instala o hook ``commit-msg`` em ``.git/hooks`` (projetos sem pre-commit).
 - ``doctor``: confere a instalação e lista o que falta, inclusive os passos de quem é dono.
 - ``version``: a versão do skill.
+
+Idioma: os textos deste módulo vêm do catálogo (``locales/``). Os workflows têm um modelo só, em
+``assets/workflows/``, para a lógica e os SHAs das actions não divergirem entre idiomas: os nomes
+de exibição do modelo são os do catálogo em pt-BR, e ``localize_workflow`` os troca pelos do idioma
+do projeto ao gerar. Os outros modelos são procurados primeiro em ``assets/locales/<idioma>/`` e
+depois em ``assets/``.
 """
 
 from __future__ import annotations
@@ -32,12 +41,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from . import i18n
 from .config import CONFIG_CANDIDATES, Config, ConfigError, find_root, load
 from .gh import CommandError, Git, GitHub, current_repository, offline, run_gh, utf8_streams
+from .i18n import t, translate
 from .plan import Repo
 from .release import ReleaseError, check_version_files
 from .semver import Version
-from .text import normalize_title, sections
+from .text import find_section, sections
 
 SKILL = Path(__file__).resolve().parents[2]
 ASSETS = SKILL / "assets"
@@ -60,6 +71,7 @@ COPY_IGNORE = (
 )
 WORKFLOWS = ("pr-check.yml", "pr-merged.yml", "release.yml", "epic-checklist.yml", "semver-analysis.yml")
 OPTIONAL_WORKFLOWS = ("dev-workflow-selftest.yml",)
+PR_CHECK = ".github/workflows/pr-check.yml"
 # O que o fluxo gerou neste projeto: versão, onde está o skill e o hash de cada arquivo gerado.
 MANIFEST = ".github/dev-workflow-manifest.json"
 MANIFEST_SCHEMA = 1
@@ -156,7 +168,7 @@ def detect_version_files(root: Path) -> tuple[list[dict[str, str]], Version | No
         entry = {"path": name, "search": literal.replace(match.group("v"), token)}
         occurrences = text.count(literal)
         if occurrences != 1:
-            entry["note"] = f"ATENÇÃO: `{literal}` aparece {occurrences} vezes; ajuste `search` ou use `count`."
+            entry["note"] = t("bootstrap.version_files.repeated", literal=literal, count=occurrences)
         entries.append(entry)
         found = found or version
     return entries, found
@@ -168,10 +180,7 @@ def _toml_string(value: str) -> str:
 
 def render_version_files(entries: list[dict[str, str]]) -> str:
     if not entries:
-        return (
-            "# Nenhum arquivo de versão reconhecido: a versão vive só nas tags. Para escrevê-la em arquivos:\n"
-            '# [[versioning.files]]\n# path = "caminho/do/arquivo"\n# search = \'version = "{current}"\'\n'
-        )
+        return t("bootstrap.version_files.none")
     blocks = []
     for entry in entries:
         note = f"# {entry['note']}\n" if entry.get("note") else ""
@@ -209,8 +218,130 @@ def skill_dir_in(root: Path) -> str | None:
         return None
 
 
-def template_values(root: Path, skill_dir: str, branch: str, cfg: Config | None, git: Git) -> dict[str, str]:
+# --- idioma dos modelos ----------------------------------------------------------------------------
+
+
+def template_path(relative: str, language: str, assets: Path = ASSETS) -> Path:
+    """O modelo em ``assets/locales/<idioma>/`` e, se o idioma não tiver um, em ``assets/``.
+
+    Os modelos em português ficam onde sempre estiveram (``assets/**`` é superfície pública); uma
+    cópia antiga do skill, sem ``locales/``, cai sempre neles.
+    """
+    localized = assets / "locales" / language / relative
+    return localized if localized.is_file() else assets / relative
+
+
+def _template_names(directory: str, language: str, assets: Path) -> list[str]:
+    """Nomes dos ``*.yml`` de um diretório de modelos, somando o do idioma e o padrão."""
+    folders = (assets / directory, assets / "locales" / language / directory)
+    return sorted({path.name for folder in folders for path in folder.glob("*.yml")})
+
+
+def workflow_texts(language: str, skill_dir: str) -> dict[str, str]:
+    """Nomes de exibição dos workflows e as mensagens que eles escrevem, num idioma.
+
+    Os modelos de ``assets/workflows/`` têm estes textos em pt-BR (o teste confere que são iguais aos
+    do catálogo); ``localize_workflow`` os troca pelos do idioma do projeto. O nome do job de
+    ``pr-check.yml`` é o check obrigatório da proteção de branch: o teste fixa o valor de cada idioma.
+    """
+    return {
+        "workflow.pr_check.job": required_check(language),
+        "workflow.pr_check.queue": translate(language, "workflow.pr_check.queue"),
+        "workflow.pr_check.queue_echo": translate(language, "workflow.pr_check.queue_echo"),
+        "workflow.pr_check.issue": translate(language, "workflow.pr_check.issue"),
+        "workflow.pr_check.no_skill": translate(language, "workflow.pr_check.no_skill"),
+        "workflow.pr_check.files": translate(language, "workflow.pr_check.files"),
+        "workflow.pr_check.request": translate(language, "workflow.pr_check.request"),
+        "workflow.pr_check.no_request": translate(language, "workflow.pr_check.no_request"),
+        "workflow.preview.job": translate(language, "workflow.preview.job"),
+        "workflow.preview.step": translate(language, "workflow.preview.step"),
+        "workflow.preview.no_skill": translate(language, "workflow.preview.no_skill"),
+        "workflow.merged.name": translate(language, "workflow.merged.name"),
+        "workflow.merged.job": translate(language, "workflow.merged.job"),
+        "workflow.merged.step": translate(language, "workflow.merged.step"),
+        "workflow.release.name": translate(language, "workflow.release.name"),
+        "workflow.release.input.force": translate(language, "workflow.release.input.force"),
+        "workflow.release.input.level": translate(language, "workflow.release.input.level"),
+        "workflow.release.input.reason": translate(language, "workflow.release.input.reason"),
+        "workflow.release.input.prerelease": translate(language, "workflow.release.input.prerelease"),
+        "workflow.release.input.dry_run": translate(language, "workflow.release.input.dry_run"),
+        "workflow.release.job": translate(language, "workflow.release.job"),
+        "workflow.release.identity": translate(language, "workflow.release.identity"),
+        "workflow.release.run": translate(language, "workflow.release.run"),
+        "workflow.epic.name": translate(language, "workflow.epic.name"),
+        "workflow.epic.job": translate(language, "workflow.epic.job"),
+        "workflow.epic.sync": translate(language, "workflow.epic.sync"),
+        "workflow.epic.close": translate(language, "workflow.epic.close"),
+        "workflow.analysis.name": translate(language, "workflow.analysis.name"),
+        "workflow.analysis.job": translate(language, "workflow.analysis.job"),
+        "workflow.analysis.plan": translate(language, "workflow.analysis.plan"),
+        "workflow.analysis.trusted": translate(language, "workflow.analysis.trusted"),
+        "workflow.analysis.agent": translate(language, "workflow.analysis.agent"),
+        "workflow.analysis.prompt": translate(language, "workflow.analysis.prompt", skill_dir=skill_dir),
+        "workflow.analysis.record": translate(language, "workflow.analysis.record"),
+        "workflow.analysis.cleanup": translate(language, "workflow.analysis.cleanup"),
+        "workflow.selftest.name": translate(language, "workflow.selftest.name"),
+        "workflow.selftest.job": translate(language, "workflow.selftest.job"),
+        "workflow.selftest.step": translate(language, "workflow.selftest.step"),
+    }
+
+
+# Onde um texto de exibição aparece num workflow: `name:` (do workflow, do job ou do passo, às vezes
+# seguido de ` (${{ matrix.os }})`), `description:` de uma entrada manual e `echo` de uma mensagem.
+_DISPLAY_NAME = r"(?m)^(?P<lead>[ \t]*(?:- )?name: ){text}(?=[ \t]*$| \()"
+_DISPLAY_QUOTED = ('description: "{text}"', 'echo "{text}"')
+# O prompt do agente é um bloco literal do YAML: as linhas levam o recuo do bloco.
+_PROMPT_INDENT = " " * 12
+
+
+def localize_workflow(text: str, language: str, skill_dir: str) -> str:
+    """Um workflow gerado com os textos de exibição em ``language``; a lógica não muda.
+
+    Só as posições de exibição são trocadas: comentários e comandos ficam como no modelo, então a
+    lógica e os SHAs das actions são os mesmos em todos os idiomas.
+    """
+    if language == i18n.DEFAULT_LANGUAGE:
+        return text
+    source, target = workflow_texts(i18n.DEFAULT_LANGUAGE, skill_dir), workflow_texts(language, skill_dir)
+    for key in sorted(source, key=lambda name: -len(source[name])):  # o texto mais longo primeiro
+        original, wanted = source[key], target[key]
+        if key == "workflow.analysis.prompt":
+            indent = "\n" + _PROMPT_INDENT
+            before, after = (_PROMPT_INDENT + value.replace("\n", indent) for value in (original, wanted))
+            text = text.replace(before, after)
+            continue
+        text = re.sub(
+            _DISPLAY_NAME.format(text=re.escape(original)), lambda match: match["lead"] + wanted, text
+        )
+        for form in _DISPLAY_QUOTED:
+            text = text.replace(form.format(text=original), form.format(text=wanted))
+    return text
+
+
+def required_check(language: str) -> str:
+    """O nome do check obrigatório (o job de ``pr-check.yml``) num idioma."""
+    return translate(language, "workflow.pr_check.job")
+
+
+_CHECK_JOB = re.compile(r"^  pr-check:[ \t]*\n(?:[ \t]*#.*\n)*    name:[ \t]*(?P<name>.+?)[ \t]*$", re.MULTILINE)
+
+
+def check_name_in(text: str | None) -> str | None:
+    """O nome do job ``pr-check`` (o check obrigatório) no texto de um ``pr-check.yml``."""
+    match = _CHECK_JOB.search(text or "")
+    return match["name"].strip("'\"") if match else None
+
+
+def language_of_check(name: str | None) -> str | None:
+    """O idioma cujo check obrigatório tem este nome."""
+    return next((language for language in i18n.LANGUAGES if name and required_check(language) == name), None)
+
+
+def template_values(
+    root: Path, skill_dir: str, branch: str, cfg: Config | None, git: Git, language: str | None = None
+) -> dict[str, str]:
     repository = current_repository(git) or "OWNER/REPO"
+    language = language or (cfg.language if cfg else i18n.DEFAULT_LANGUAGE)
     return {
         "SKILL_DIR": skill_dir,
         "SKILL_GLOB": "**" if skill_dir == "." else f"{skill_dir}/**",
@@ -221,22 +352,49 @@ def template_values(root: Path, skill_dir: str, branch: str, cfg: Config | None,
         "REPOSITORY_URL": f"https://github.com/{repository}",
         # `actions: write` no release.yml só quando há workflow de publicação a disparar.
         "IF_DISPATCH": "1" if cfg and cfg.release["dispatch_workflow"] else "",
+        "LANGUAGE": language,
     }
 
 
 def planned_files(values: dict[str, str], *, selftest: bool, assets: Path = ASSETS) -> dict[str, str]:
-    """``{caminho no projeto: conteúdo}`` dos modelos, sem a configuração."""
+    """``{caminho no projeto: conteúdo}`` dos modelos, sem a configuração, no idioma de ``values``."""
+    language = values.get("LANGUAGE", i18n.DEFAULT_LANGUAGE)
     files: dict[str, str] = {}
     for name in (*WORKFLOWS, *(OPTIONAL_WORKFLOWS if selftest else ())):
-        template = assets / "workflows" / name
+        template = template_path(f"workflows/{name}", language, assets)
         if template.is_file():
-            files[f".github/workflows/{name}"] = render(template.read_text(encoding="utf-8"), values)
-    for template in sorted((assets / "ISSUE_TEMPLATE").glob("*.yml")):
-        files[f".github/ISSUE_TEMPLATE/{template.name}"] = render(template.read_text(encoding="utf-8"), values)
-    pull_request = assets / "pull_request_template.md"
+            rendered = render(template.read_text(encoding="utf-8"), values)
+            files[f".github/workflows/{name}"] = localize_workflow(rendered, language, values.get("SKILL_DIR", "."))
+    for name in _template_names("ISSUE_TEMPLATE", language, assets):
+        template = template_path(f"ISSUE_TEMPLATE/{name}", language, assets)
+        files[f".github/ISSUE_TEMPLATE/{name}"] = render(template.read_text(encoding="utf-8"), values)
+    pull_request = template_path("pull_request_template.md", language, assets)
     if pull_request.is_file():
         files[".github/pull_request_template.md"] = pull_request.read_text(encoding="utf-8")
     return files
+
+
+def planned_by_language(
+    root: Path, skill_dir: str, branch: str, cfg: Config | None, git: Git, *, selftest: bool, assets: Path = ASSETS
+) -> dict[str, dict[str, str]]:
+    """``planned_files`` em cada idioma: um arquivo igual a qualquer um deles é um modelo não editado."""
+    return {
+        language: planned_files(
+            template_values(root, skill_dir, branch, cfg, git, language), selftest=selftest, assets=assets
+        )
+        for language in i18n.LANGUAGES
+    }
+
+
+_LANGUAGE_LINE = re.compile(r"^#?[ \t]*language[ \t]*=.*$", re.MULTILINE)
+
+
+def with_language(config: str, language: str) -> str:
+    """A configuração gerada com a chave ``language`` ativa (troca a linha comentada do modelo)."""
+    line = f'language = "{language}"'
+    if _LANGUAGE_LINE.search(config):
+        return _LANGUAGE_LINE.sub(line, config, count=1)
+    return re.sub(r"^schema = 1[ \t]*$", f"schema = 1\n{line}", config, count=1, flags=re.MULTILINE)
 
 
 # --- manifesto ---------------------------------------------------------------------------------
@@ -249,21 +407,27 @@ class ManifestError(ValueError):
 @dataclass
 class Manifest:
     """O que uma instalação gerou: com ele, arquivo gerado e não editado é reconhecido pelo hash,
-    mesmo depois de a configuração (label, branch) mudar o que o modelo renderiza."""
+    mesmo depois de a configuração (label, branch) mudar o que o modelo renderiza.
+
+    ``language`` é o idioma em que os arquivos foram gerados; só é gravado quando não é o padrão
+    (os manifestos de antes da chave são todos em pt-BR).
+    """
 
     version: str
     skill_dir: str
     files: dict[str, str] = field(default_factory=dict)
+    language: str = i18n.DEFAULT_LANGUAGE
 
     def pristine(self, name: str, text: str) -> bool:
         return self.files.get(name) == digest(text)
 
     def text(self) -> str:
         data = {
-            "about": "Gerado pelo bootstrap.py do skill dev-workflow; não edite à mão.",
+            "about": t("bootstrap.manifest.about"),
             "schema": MANIFEST_SCHEMA,
             "version": self.version,
             "skill_dir": self.skill_dir,
+            **({"language": self.language} if self.language != i18n.DEFAULT_LANGUAGE else {}),
             "files": dict(sorted(self.files.items())),
         }
         return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
@@ -281,7 +445,7 @@ def read_manifest(root: Path) -> Manifest | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise ManifestError(f"{MANIFEST} ilegível: {exc}") from exc
+        raise ManifestError(t("bootstrap.manifest.unreadable", manifest=MANIFEST, error=exc)) from exc
     files = data.get("files") if isinstance(data, dict) else None
     if (
         not isinstance(files, dict)
@@ -289,12 +453,18 @@ def read_manifest(root: Path) -> Manifest | None:
         or not isinstance(data.get("skill_dir"), str)
         or not all(isinstance(key, str) and isinstance(value, str) for key, value in files.items())
     ):
-        raise ManifestError(f"{MANIFEST} não está no formato {MANIFEST_SCHEMA} (schema, version, skill_dir, files)")
+        raise ManifestError(t("bootstrap.manifest.format", manifest=MANIFEST, schema=MANIFEST_SCHEMA))
     try:
         skill_dir = "." if data["skill_dir"] == "." else normalize_skill_dir(data["skill_dir"])
     except ValueError as exc:
         raise ManifestError(f"{MANIFEST}: {exc}") from exc
-    return Manifest(str(data.get("version", "?")), skill_dir, dict(files))
+    language = i18n.normalize(data.get("language", i18n.DEFAULT_LANGUAGE))
+    if language is None:
+        accepted = ", ".join(i18n.LANGUAGES)
+        raise ManifestError(
+            t("bootstrap.manifest.language", manifest=MANIFEST, value=data.get("language"), accepted=accepted)
+        )
+    return Manifest(str(data.get("version", "?")), skill_dir, dict(files), language)
 
 
 def normalize_skill_dir(value: str) -> str:
@@ -302,10 +472,10 @@ def normalize_skill_dir(value: str) -> str:
     raw = value.strip().replace("\\", "/")
     path = PurePosixPath(raw)
     if not raw or path.is_absolute() or re.match(r"^[A-Za-z]:", raw) or ".." in path.parts:
-        raise ValueError(f"o caminho do skill ({value!r}) tem de ser relativo à raiz e ficar dentro do repositório")
+        raise ValueError(t("bootstrap.skill_dir.outside", value=repr(value)))
     normalized = path.as_posix()
     if normalized in ("", ".") or path.parts[0] == ".git":
-        raise ValueError(f"o caminho do skill ({value!r}) não pode ser a raiz do repositório nem ficar em .git")
+        raise ValueError(t("bootstrap.skill_dir.root", value=repr(value)))
     return normalized
 
 
@@ -442,103 +612,115 @@ def install_hook(root: Path, skill_dir: str, *, force: bool = False) -> str:
     if target.exists() and not force:
         existing = target.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
         if existing == content:
-            return f"hook commit-msg já instalado em {target}"
+            return t("bootstrap.hook.present", path=target)
         if HOOK_MARK in existing:
             pass  # o hook deste skill, de outra versão ou de outro caminho: é renovado
         elif "github_issues.py" in existing or "pre-commit" in existing:
-            return f"hook commit-msg já instalado em {target}"
+            return t("bootstrap.hook.present", path=target)
         else:
-            return f"ATENÇÃO: {target} já existe e é de outra origem; use --force para trocar ou chame o script a partir dele"
+            return t("bootstrap.hook.foreign", path=target)
     renewed = target.exists()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(content.encode("utf-8"))
     target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return f"hook commit-msg {'renovado' if renewed else 'instalado'} em {target}"
+    return t("bootstrap.hook.renewed", path=target) if renewed else t("bootstrap.hook.installed", path=target)
 
 
 def init(args: argparse.Namespace) -> int:
     root = find_root()
     git = Git(root)
+    requested: str | None = None
+    if args.language:
+        requested = i18n.normalize(args.language)
+        if requested is None:
+            accepted = ", ".join(i18n.LANGUAGES)
+            return _refuse(t("bootstrap.init.language_unknown", value=args.language, accepted=accepted))
+        i18n.activate(requested)
     if not (root / ".git").exists():
-        print("ERRO: rode dentro de um repositório git (`git init` primeiro).", file=sys.stderr)
-        return 1
+        return _refuse(t("bootstrap.init.not_git"))
     try:
         wanted = normalize_skill_dir(args.skill_dir) if args.skill_dir else None
         manifest = read_manifest(root)
     except ValueError as exc:
         return _refuse(str(exc))
+    # A configuração que fica decide o idioma (e os labels dos modelos); --language não a contradiz.
+    existing_config = next((name for name in CONFIG_CANDIDATES if (root / name).is_file()), None)
+    cfg: Config | None = None
+    config_warning = None
+    kept_language = None
+    if existing_config is not None:
+        try:
+            loaded = load(root)
+        except ConfigError as exc:
+            loaded = None
+            if not args.force:
+                config_warning = t("bootstrap.init.config_invalid", error=exc)
+        if loaded is not None:
+            kept_language = loaded.language
+            cfg = None if args.force else loaded
+    if cfg is not None and requested is not None and requested != cfg.language:
+        return _refuse(
+            t("bootstrap.init.language_conflict", config=existing_config, current=cfg.language, requested=requested)
+        )
+    language = requested or kept_language or i18n.DEFAULT_LANGUAGE
+    i18n.activate(language)
     skill_dir = skill_dir_in(root)
     actions: list[str] = []
     if skill_dir is not None and wanted is not None and wanted != skill_dir:
-        return _refuse(
-            f"este skill já está no repositório, em {skill_dir}; --skill-dir só vale rodando o init de uma cópia "
-            "de fora do projeto."
-        )
+        return _refuse(t("bootstrap.init.inside", skill_dir=skill_dir))
     if skill_dir is None:
         skill_dir = wanted or (manifest.skill_dir if manifest else VENDOR_PATH)
         destination = root / skill_dir
         if destination.exists() and not args.force:
-            return _refuse(f"{skill_dir} já existe; rode o bootstrap de lá ou use --force.")
+            return _refuse(t("bootstrap.init.exists", skill_dir=skill_dir))
         if not args.dry_run:
             copy_skill(SKILL, destination)
-        actions.append(
-            f"skill dev-workflow {skill_version()} copiado para {skill_dir} "
-            "(os workflows do CI chamam os scripts de lá)"
-        )
+        actions.append(t("bootstrap.init.copied", version=skill_version(), skill_dir=skill_dir))
     branch = args.default_branch or default_branch(git)
     entries, detected = detect_version_files(root)
     initial = args.initial_version or (str(detected) if detected else "0.1.0")
     if Version.try_parse(initial) is None:
-        return _refuse(f"'{initial}' não é uma versão SemVer.")
-    existing_config = next((name for name in CONFIG_CANDIDATES if (root / name).is_file()), None)
-    cfg: Config | None = None
-    if existing_config is not None and not args.force:
-        try:  # os modelos seguem a configuração que fica (labels, por exemplo)
-            cfg = load(root)
-        except ConfigError as exc:
-            actions.append(f"ATENÇÃO: {exc}; modelos gerados com os valores padrão")
+        return _refuse(t("bootstrap.init.not_semver", version=initial))
+    if config_warning:
+        actions.append(config_warning)
     values = template_values(
-        root, skill_dir, cfg.default_branch if cfg and not args.default_branch else branch, cfg, git
+        root, skill_dir, cfg.default_branch if cfg and not args.default_branch else branch, cfg, git, language
     )
     files = planned_files(values, selftest=args.selftest)
     if existing_config is None or args.force:
         config_values = {**values, "INITIAL_VERSION": initial, "VERSION_FILES": render_version_files(entries)}
-        files = {
-            CONFIG_CANDIDATES[0]: render(
-                (ASSETS / "dev-workflow.toml")
-                .read_text(encoding="utf-8")
-                .replace("# __VERSION_FILES__", "__VERSION_FILES__"),
-                config_values,
-            ),
-            **files,
-        }
+        config = render(
+            template_path("dev-workflow.toml", language)
+            .read_text(encoding="utf-8")
+            .replace("# __VERSION_FILES__", "__VERSION_FILES__"),
+            config_values,
+        )
+        if requested is not None or language != i18n.DEFAULT_LANGUAGE:
+            config = with_language(config, language)
+        files = {CONFIG_CANDIDATES[0]: config, **files}
     else:
-        actions.append(f"{existing_config} mantido (já existe)")
+        actions.append(t("bootstrap.init.config_kept", name=existing_config))
     # O manifesto registra o que é do fluxo: o que este init gravou e o que já estava igual ao modelo.
-    recorded = Manifest(skill_version(), skill_dir, dict(manifest.files) if manifest else {})
+    recorded = Manifest(skill_version(), skill_dir, dict(manifest.files) if manifest else {}, language)
     for name, content in files.items():
         target = root / name
         if target.exists() and not args.force:
             same = target.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n") == content
             if same:
                 recorded.files[name] = digest(content)
-            actions.append(
-                f"{name} {'já está igual ao modelo' if same else 'mantido (já existe e difere do modelo; --force troca)'}"
-            )
+            actions.append(t("bootstrap.init.same", name=name) if same else t("bootstrap.init.kept", name=name))
             continue
         if not args.dry_run:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content.encode("utf-8"))
         recorded.files[name] = digest(content)
-        actions.append(f"{name} criado")
+        actions.append(t("bootstrap.init.created", name=name))
     if not args.dry_run:
         (root / MANIFEST).parent.mkdir(parents=True, exist_ok=True)
         (root / MANIFEST).write_bytes(recorded.text().encode("utf-8"))
-    actions.append(f"{MANIFEST} gravado (versão, caminho do skill e hash de cada arquivo gerado)")
+    actions.append(t("bootstrap.init.manifest", manifest=MANIFEST))
     if (root / ".pre-commit-config.yaml").is_file():
-        actions.append(
-            f"projeto usa pre-commit: acrescente o trecho de {skill_dir}/assets/pre-commit-hook.yaml e rode `pre-commit install`"
-        )
+        actions.append(t("bootstrap.init.pre_commit", skill_dir=skill_dir))
     elif not args.dry_run:
         actions.append(install_hook(root, skill_dir, force=args.force))
     if not args.no_labels and not args.dry_run and not offline():
@@ -549,22 +731,11 @@ def init(args: argparse.Namespace) -> int:
         except (ConfigError, OSError) as exc:
             ok = False
             actions.append(f"labels: {exc}")
-        actions.append(
-            "labels criados no GitHub"
-            if ok
-            else "labels NÃO criados: rode `github_issues.py sync-labels` com o gh autenticado"
-        )
+        actions.append(t("bootstrap.init.labels_created") if ok else t("bootstrap.init.labels_missing"))
     prefix = "[dry-run] " if args.dry_run else ""
     for action in actions:
         print(f"{prefix}{action}")
-    print(
-        "\nPróximos passos:\n"
-        f"  1. Revise .github/dev-workflow.toml (arquivos de versão, superfícies públicas) e rode\n"
-        f"     python3 {skill_dir}/scripts/bootstrap.py doctor\n"
-        "  2. Commite os arquivos gerados e mescle na branch padrão: workflows só valem a partir dela.\n"
-        f"  3. Crie a tag de base: python3 {skill_dir}/scripts/release.py baseline --push\n"
-        f"  4. Passos de quem é dono (segredos, permissões, proteção de branch): {skill_dir}/references/installation.md"
-    )
+    print(t("bootstrap.init.next", skill_dir=skill_dir, check=required_check(language)))
     return 0
 
 
@@ -579,7 +750,7 @@ def _read(path: Path) -> str | None:
 
 
 def _refuse(message: str) -> int:
-    print(f"ERRO: {message}", file=sys.stderr)
+    print(t("bootstrap.error", message=message), file=sys.stderr)
     return 1
 
 
@@ -587,10 +758,7 @@ def update(args: argparse.Namespace) -> int:
     """Troca a cópia do skill no projeto pela versão que está rodando este comando."""
     root = find_root()
     if skill_dir_in(root) is not None:
-        return _refuse(
-            "este é o skill que já está no projeto. Rode o update a partir da versão nova (por exemplo o\n"
-            "clone do repositório do skill): python3 <skill-novo>/scripts/bootstrap.py update"
-        )
+        return _refuse(t("bootstrap.update.inside"))
     try:
         manifest = read_manifest(root)
     except ManifestError as exc:
@@ -598,31 +766,43 @@ def update(args: argparse.Namespace) -> int:
     skill_dir = manifest.skill_dir if manifest else VENDOR_PATH
     destination = root / skill_dir
     if not is_skill(destination):
-        return _refuse(f"{skill_dir} não tem o skill dev-workflow; para instalar, use `bootstrap.py init`.")
+        return _refuse(t("bootstrap.update.not_skill", skill_dir=skill_dir))
     old, new = skill_version(destination), skill_version()
     old_version, new_version = Version.try_parse(old), Version.try_parse(new)
     if new_version is None:
-        return _refuse(f"a versão do skill de origem ({new}) não é SemVer; confira o arquivo VERSION.")
+        return _refuse(t("bootstrap.update.not_semver", version=new))
     if old_version is not None and new_version.key() < old_version.key() and not args.force:
-        return _refuse(f"a cópia instalada ({old}) é mais nova que a de origem ({new}); use --force para voltar.")
+        return _refuse(t("bootstrap.update.newer", old=old, new=new))
     try:
         cfg = load(root)
     except ConfigError as exc:
         return _refuse(str(exc))
     git = Git(root)
 
+    # O idioma é o da configuração: o update nunca o troca sozinho. Os arquivos gerados num idioma
+    # (registrado no manifesto ou, sem ele, reconhecido pelo nome do check) passam para o da
+    # configuração só quando a chave `language` mudou.
+    language = cfg.language
+    current_check = check_name_in(_read(root / PR_CHECK))
+    if manifest is not None:
+        previous_language = manifest.language
+    else:
+        previous_language = language_of_check(current_check) or i18n.DEFAULT_LANGUAGE
+
     # Arquivo não personalizado recebe o modelo novo: o hash bate com o do manifesto ou, sem ele, o
-    # conteúdo é o modelo antigo com os valores de hoje. Arquivo personalizado só é trocado com
-    # --force. Opcional ausente continua ausente.
-    values = template_values(root, skill_dir, cfg.default_branch, cfg, git)
-    before = planned_files(values, selftest=True, assets=destination / "assets")
+    # conteúdo é o modelo antigo, em qualquer idioma, com os valores de hoje. Arquivo personalizado
+    # só é trocado com --force. Opcional ausente continua ausente.
+    values = template_values(root, skill_dir, cfg.default_branch, cfg, git, language)
+    before = planned_by_language(
+        root, skill_dir, cfg.default_branch, cfg, git, selftest=True, assets=destination / "assets"
+    )
     after = planned_files(values, selftest=True)
     recorded = manifest.files if manifest else {}
-    renewed = Manifest(new, skill_dir, dict(recorded))
+    renewed = Manifest(new, skill_dir, dict(recorded), language)
     optional = {f".github/workflows/{name}" for name in (*OPTIONAL_WORKFLOWS, "semver-analysis.yml")}
 
     def pristine(name: str, text: str) -> bool:
-        return recorded.get(name) == digest(text) or text == before.get(name)
+        return recorded.get(name) == digest(text) or any(text == files.get(name) for files in before.values())
 
     regenerate: dict[str, str] = {}
     customized: list[str] = []
@@ -640,11 +820,14 @@ def update(args: argparse.Namespace) -> int:
     # O que a versão nova deixou de gerar: sai se não foi editado; se foi, fica e deixa de ser do fluxo.
     obsolete: list[str] = []
     orphaned: list[str] = []
-    for name in sorted((set(recorded) | set(before)) - set(after) - set(CONFIG_CANDIDATES)):
+    generated_before = set().union(*before.values())
+    for name in sorted((set(recorded) | generated_before) - set(after) - set(CONFIG_CANDIDATES)):
         renewed.files.pop(name, None)
         current = _read(root / name)
         if current is not None:
             (obsolete if pristine(name, current) else orphaned).append(name)
+    new_check = check_name_in(regenerate.get(PR_CHECK))
+    renamed_check = current_check is not None and new_check is not None and new_check != current_check
 
     # O hook deste checkout: renovado se é o do skill (o de outra origem não é tocado).
     hook = hook_path(git)
@@ -656,7 +839,7 @@ def update(args: argparse.Namespace) -> int:
     wanted = _skill_files(SKILL)
     removed = sorted(_skill_files(destination) - wanted)
     if args.dry_run:
-        print(f"{prefix}skill dev-workflow {old} → {new} em {skill_dir}")
+        print(f"{prefix}{t('bootstrap.update.dry_run', old=old, new=new, skill_dir=skill_dir)}")
     else:
         staged = destination.with_name(f".{destination.name}.update-new")
         _rmtree(staged)
@@ -677,40 +860,36 @@ def update(args: argparse.Namespace) -> int:
             failures = transaction.rollback()
             _rmtree(staged)
             if failures:
-                return _refuse(
-                    f"o update falhou ({exc}) e não consegui desfazer tudo: {'; '.join(failures)}. "
-                    "Confira com `git status` e restaure com `git checkout -- .`."
-                )
-            return _refuse(
-                f"o update falhou ({exc}); nada foi trocado: a cópia {old} e os arquivos continuam como antes."
-            )
+                return _refuse(t("bootstrap.update.failed_partial", error=exc, failures="; ".join(failures)))
+            return _refuse(t("bootstrap.update.failed", error=exc, old=old))
         transaction.commit()
         for name in obsolete:
             _prune_empty((root / name).parent, root)
-        print(f"skill dev-workflow {old} → {new} em {skill_dir}: {len(wanted)} arquivo(s), {len(removed)} removido(s)")
-        for name in removed:
-            print(f"  removido {skill_dir}/{name}")
-    for name in regenerate:
-        print(f"{prefix}{name} atualizado pelo modelo novo")
-    for name in obsolete:
-        print(f"{prefix}{name} removido (a versão nova não o gera mais)")
-    for name in customized:
         print(
-            f"{prefix}ATENÇÃO: {name} foi personalizado e difere do modelo novo; compare e ajuste à mão "
-            "(ou rode de novo com --force para trocar)"
+            t("bootstrap.update.done", old=old, new=new, skill_dir=skill_dir, count=len(wanted), removed=len(removed))
         )
+        for name in removed:
+            print(t("bootstrap.update.removed_file", skill_dir=skill_dir, name=name))
+    if previous_language != language:
+        print(f"{prefix}{t('bootstrap.update.language', old=previous_language, new=language)}")
+    for name in regenerate:
+        print(f"{prefix}{t('bootstrap.update.regenerated', name=name)}")
+    for name in obsolete:
+        print(f"{prefix}{t('bootstrap.update.obsolete', name=name)}")
+    for name in customized:
+        print(f"{prefix}{t('bootstrap.update.customized', name=name)}")
     for name in orphaned:
-        print(f"{prefix}ATENÇÃO: {name} não é mais gerado pela versão nova, mas foi personalizado: ficou; remova à mão")
+        print(f"{prefix}{t('bootstrap.update.orphaned', name=name)}")
+    if renamed_check:
+        print(f"{prefix}{t('bootstrap.update.check_renamed', old=current_check, new=new_check)}")
     if renew_hook:
-        print(f"{prefix}hook commit-msg renovado em {hook}")
-    print(f"{prefix}{MANIFEST} {'gravado' if manifest is None else 'atualizado'}")
-    print(f"{prefix}{CONFIG_CANDIDATES[0]} mantido (o update nunca troca a configuração)")
-    print(
-        "\nPróximos passos:\n"
-        f"  1. python3 {skill_dir}/scripts/bootstrap.py doctor\n"
-        "  2. Revise o diff e commite numa branch da issue da atualização; workflows novos valem depois\n"
-        "     do merge na branch padrão. Os outros checkouts renovam o hook com `bootstrap.py install-hook`."
-    )
+        print(f"{prefix}{t('bootstrap.hook.renewed', path=hook)}")
+    if manifest is None:
+        print(f"{prefix}{t('bootstrap.update.manifest_written', manifest=MANIFEST)}")
+    else:
+        print(f"{prefix}{t('bootstrap.update.manifest_updated', manifest=MANIFEST)}")
+    print(f"{prefix}{t('bootstrap.update.config_kept', name=CONFIG_CANDIDATES[0])}")
+    print(t("bootstrap.update.next", skill_dir=skill_dir))
     return 0
 
 
@@ -736,46 +915,50 @@ def uninstall(args: argparse.Namespace) -> int:
     # O skill na raiz do repositório é o próprio projeto: só os arquivos gerados saem.
     remove_copy = skill_dir != "." and is_skill(copy)
     assets = (copy if is_skill(copy) else SKILL) / "assets"
-    values = template_values(root, skill_dir, cfg.default_branch, cfg, git)
-    planned = planned_files(values, selftest=True, assets=assets)
+    planned = planned_by_language(root, skill_dir, cfg.default_branch, cfg, git, selftest=True, assets=assets)
+    names = set().union(*planned.values())
     recorded = manifest.files if manifest else {}
     config = cfg.path.relative_to(root).as_posix() if cfg.path and cfg.path.is_relative_to(root) else None
 
     remove: list[str] = []
     keep: list[str] = []
-    for name in sorted(set(recorded) | set(planned) | ({config} if config else set())):
+    for name in sorted(set(recorded) | names | ({config} if config else set())):
         current = _read(root / name)
         if current is None:
             continue
-        if recorded.get(name) == digest(current) or current == planned.get(name):
+        if recorded.get(name) == digest(current) or any(current == files.get(name) for files in planned.values()):
             remove.append(name)
         else:
-            keep.append(f"{name} (personalizado)" if name != config else f"{name} (configuração do projeto)")
+            keep.append(
+                t("bootstrap.uninstall.customized", name=name)
+                if name != config
+                else t("bootstrap.uninstall.config", name=name)
+            )
     hook = hook_path(git)
     hook_text = _read(hook)
     remove_hook = hook_text is not None and hook_text in (hook_content(skill_dir, assets), hook_content(skill_dir))
     if hook_text is not None and not remove_hook and HOOK_MARK in hook_text:
-        keep.append(f"{hook} (hook commit-msg editado)")
+        keep.append(t("bootstrap.uninstall.hook_edited", path=hook))
     if (root / ".pre-commit-config.yaml").is_file() and "github_issues.py" in (
         _read(root / ".pre-commit-config.yaml") or ""
     ):
-        keep.append(".pre-commit-config.yaml (tire o trecho do dev-workflow e rode `pre-commit install`)")
-    keep += [f"{name} (tire os hooks que chamam dev-workflow-hook.mjs)" for name in _claude_hook_files(root)]
-    keep.append("labels no GitHub, tags de versão e changelog (são o histórico; remova à mão se quiser)")
+        keep.append(t("bootstrap.uninstall.pre_commit"))
+    keep += [t("bootstrap.uninstall.claude", name=name) for name in _claude_hook_files(root)]
+    keep.append(t("bootstrap.uninstall.history"))
 
-    print(f"Desinstalação do dev-workflow em {root}:")
+    print(t("bootstrap.uninstall.title", root=root))
     if remove_copy:
-        print(f"  sai   {skill_dir}/ (cópia do skill {skill_version(copy)})")
+        print(t("bootstrap.uninstall.copy", skill_dir=skill_dir, version=skill_version(copy)))
     for name in remove:
-        print(f"  sai   {name}")
+        print(t("bootstrap.uninstall.leaves", item=name))
     if remove_hook:
-        print(f"  sai   {hook}")
+        print(t("bootstrap.uninstall.leaves", item=hook))
     if (root / MANIFEST).is_file():
-        print(f"  sai   {MANIFEST}")
+        print(t("bootstrap.uninstall.leaves", item=MANIFEST))
     for item in keep:
-        print(f"  fica  {item}")
+        print(t("bootstrap.uninstall.stays", item=item))
     if not args.yes:
-        print("\nNada foi removido: confira a lista e rode de novo com --yes.")
+        print(t("bootstrap.uninstall.nothing"))
         return 0
 
     for name in remove:
@@ -788,7 +971,7 @@ def uninstall(args: argparse.Namespace) -> int:
     if remove_copy:  # por último: pode ser a cópia que está rodando este comando
         _rmtree(copy)
         _prune_empty(copy.parent, root)
-    print("\nRemovido. Commite a remoção numa branch de issue; o que ficou está na lista acima.")
+    print(t("bootstrap.uninstall.done"))
     return 0
 
 
@@ -800,16 +983,20 @@ class Report:
         self.errors = 0
         self.pending = 0
 
+    @staticmethod
+    def _line(tag: str, message: str) -> None:
+        print(f"  {tag:<10}{message}")
+
     def ok(self, message: str) -> None:
-        print(f"  ok        {message}")
+        self._line(t("bootstrap.doctor.tag.ok"), message)
 
     def todo(self, message: str) -> None:
         self.pending += 1
-        print(f"  PENDENTE  {message}")
+        self._line(t("bootstrap.doctor.tag.pending"), message)
 
     def error(self, message: str) -> None:
         self.errors += 1
-        print(f"  ERRO      {message}")
+        self._line(t("bootstrap.doctor.tag.error"), message)
 
 
 _SCRIPT_CALL = re.compile(r"""(?:python3?\s+|script=")([^\s"'$]+)/scripts/(?:release|github_issues)\.py""")
@@ -820,19 +1007,21 @@ def workflow_problems(name: str, text: str, cfg: Config, skill_dir: str) -> list
     problems = []
     paths = sorted({match.group(1) for match in _SCRIPT_CALL.finditer(text)} - {skill_dir})
     if paths:
-        problems.append(f"chama os scripts em {', '.join(paths)}, mas o skill está em {skill_dir}")
+        problems.append(t("bootstrap.doctor.wrong_scripts", paths=", ".join(paths), skill_dir=skill_dir))
     if name.endswith("/release.yml"):
         match = re.search(r"^\s*branches:\s*\[(?P<items>[^\]]*)\]", text, re.MULTILINE)
         branches = [item.strip().strip("'\"") for item in match.group("items").split(",")] if match else []
         if match and cfg.default_branch not in branches:
-            problems.append(f"não roda no push da branch padrão {cfg.default_branch} (branches: {', '.join(branches)})")
+            problems.append(
+                t("bootstrap.doctor.wrong_branch", branch=cfg.default_branch, branches=", ".join(branches))
+            )
     dispatch = cfg.release["dispatch_workflow"]
     if name.endswith("/release.yml") and dispatch and not re.search(r"^\s*actions:\s*write\b", text, re.MULTILINE):
-        problems.append(f"release.dispatch_workflow ({dispatch}) precisa de `actions: write`")
+        problems.append(t("bootstrap.doctor.dispatch", workflow=dispatch))
     if name.endswith("/semver-analysis.yml"):
         release, prefix = cfg.label("release"), cfg.label("prerelease_prefix")
         if f"'{release}'" not in text or f"',{prefix}'" not in text:
-            problems.append(f"não reage aos labels de versão da configuração ({release}, {prefix}<canal>)")
+            problems.append(t("bootstrap.doctor.labels_condition", release=release, prefix=prefix))
     return problems
 
 
@@ -859,25 +1048,23 @@ def hook_python() -> str | None:
 def hook_report(report: Report, hook: Path, skill_dir: str) -> None:
     text = _read(hook)
     if text is None:
-        report.todo("hook commit-msg ausente: `pre-commit install` ou `bootstrap.py install-hook`")
+        report.todo(t("bootstrap.doctor.hook_missing"))
         return
     if text == hook_content(skill_dir):
-        report.ok("hook commit-msg instalado neste checkout")
+        report.ok(t("bootstrap.doctor.hook_ok"))
     elif HOOK_MARK in text:
-        report.todo(
-            "hook commit-msg desatualizado (de outra versão ou de outro caminho): `bootstrap.py install-hook` renova"
-        )
+        report.todo(t("bootstrap.doctor.hook_stale"))
     elif "github_issues.py" in text or "pre-commit" in text:
-        report.ok("hook commit-msg instalado neste checkout (pre-commit ou de outra origem)")
+        report.ok(t("bootstrap.doctor.hook_other"))
         return
     else:
-        report.todo(f"{hook} é de outra origem e não chama github_issues.py commit-msg")
+        report.todo(t("bootstrap.doctor.hook_foreign", path=hook))
         return
     found = hook_python()
     if found:
-        report.ok(f"o hook commit-msg acha Python 3.11+ ({found})")
+        report.ok(t("bootstrap.doctor.hook_python", python=found))
     else:
-        report.error("nenhum python3, python ou `py -3` do PATH é 3.11+: o hook commit-msg recusa todo commit")
+        report.error(t("bootstrap.doctor.hook_no_python"))
 
 
 _CLAUDE_HOOK_PATH = re.compile(r"""(?:\$\{?CLAUDE_PROJECT_DIR\}?/)?([^\s"']*dev-workflow-hook\.mjs)""")
@@ -894,7 +1081,7 @@ def claude_hooks_report(report: Report, root: Path, skill_dir: str) -> None:
         try:
             data = json.loads(text)
         except ValueError as exc:
-            report.error(f"{name} não é JSON válido: {exc}")
+            report.error(t("bootstrap.doctor.claude_json", name=name, error=exc))
             continue
         hooks = data.get("hooks") if isinstance(data, dict) else None
         commands = [
@@ -910,33 +1097,63 @@ def claude_hooks_report(report: Report, root: Path, skill_dir: str) -> None:
         configured = configured or bool(paths)
         for path in sorted(paths):
             if path != expected:
-                report.error(f"{name}: hook do Claude Code aponta para {path}, mas o skill está em {expected}")
+                report.error(t("bootstrap.doctor.claude_path", name=name, path=path, expected=expected))
         if paths and not (root / expected).is_file():
-            report.error(f"{name}: hook do Claude Code {expected} não existe")
+            report.error(t("bootstrap.doctor.claude_missing", name=name, expected=expected))
         elif paths and expected in paths:
-            report.ok(f"hooks do Claude Code configurados em {name}")
+            report.ok(t("bootstrap.doctor.claude_ok", name=name))
     if not configured:
-        report.ok("hooks do Claude Code não configurados (opcionais)")
+        report.ok(t("bootstrap.doctor.claude_none"))
     elif shutil.which("node") is None:
-        report.todo("hooks do Claude Code configurados, mas `node` não está no PATH: eles não rodam")
+        report.todo(t("bootstrap.doctor.claude_node"))
+
+
+def language_report(report: Report, root: Path, cfg: Config, manifest: Manifest | None) -> None:
+    """O idioma dos arquivos gerados e o check obrigatório, que muda de nome com ele."""
+    expected = required_check(cfg.language)
+    found = check_name_in(_read(root / PR_CHECK))
+    if found is not None and found != expected:
+        report.todo(t("bootstrap.doctor.check_name", found=found, expected=expected, language=cfg.language))
+    elif manifest is not None and manifest.language != cfg.language:
+        recorded, language = manifest.language, cfg.language
+        report.todo(t("bootstrap.doctor.manifest_language", manifest=MANIFEST, recorded=recorded, language=language))
+
+
+def protection_report(report: Report, github: GitHub, branch: str, check: str) -> None:
+    """O check obrigatório na proteção da branch, quando o token pode ler a proteção (dono ou admin)."""
+    try:
+        data = github.api(f"branches/{branch}/protection/required_status_checks")
+    except CommandError:
+        return  # sem permissão de leitura da proteção: fica o lembrete do fim do doctor
+    if not isinstance(data, dict):
+        return
+    contexts = {str(item) for item in data.get("contexts") or []}
+    contexts |= {str(item.get("context")) for item in data.get("checks") or [] if isinstance(item, dict)}
+    if not contexts:
+        return
+    if check in contexts:
+        report.ok(t("bootstrap.doctor.protection_ok", branch=branch, check=check))
+    else:
+        shown = ", ".join(f"`{name}`" for name in sorted(contexts))
+        report.todo(t("bootstrap.doctor.protection_missing", branch=branch, checks=shown, check=check))
 
 
 def doctor(_args: argparse.Namespace) -> int:
     root = find_root()
     git = Git(root)
     report = Report()
-    print(f"dev-workflow em {root}")
+    print(t("bootstrap.doctor.title", root=root))
     try:
         cfg = load(root)
     except ConfigError as exc:
         report.error(str(exc))
         return 1
     if cfg.path is None:
-        report.error("sem .github/dev-workflow.toml: rode `bootstrap.py init`.")
+        report.error(t("bootstrap.doctor.no_config"))
     else:
-        report.ok(f"configuração válida: {cfg.path.relative_to(root).as_posix()}")
+        report.ok(t("bootstrap.doctor.config", path=cfg.path.relative_to(root).as_posix()))
     # Abaixo de 3.11 o bootstrap.py nem chega aqui: recusa antes de importar (tomllib).
-    report.ok(f"Python {sys.version_info.major}.{sys.version_info.minor} rodando este comando (3.11+)")
+    report.ok(t("bootstrap.doctor.python", version=f"{sys.version_info.major}.{sys.version_info.minor}"))
     try:
         manifest = read_manifest(root)
     except ManifestError as exc:
@@ -945,56 +1162,59 @@ def doctor(_args: argparse.Namespace) -> int:
     skill_dir = skill_dir_in(root)
     if skill_dir is None:
         skill_dir = manifest.skill_dir if manifest else VENDOR_PATH
-        report.error(
-            f"o skill está fora do repositório; o CI precisa dele versionado (bootstrap.py init copia para {skill_dir})."
-        )
+        report.error(t("bootstrap.doctor.outside", skill_dir=skill_dir))
     else:
-        report.ok(f"skill dev-workflow {skill_version()} versionado em {skill_dir}")
+        report.ok(t("bootstrap.doctor.versioned", version=skill_version(), skill_dir=skill_dir))
     if manifest is None:
-        report.ok(f"sem {MANIFEST}: o próximo `update` o grava; até lá, personalizado é o que difere do modelo")
+        report.ok(t("bootstrap.doctor.no_manifest", manifest=MANIFEST))
     elif manifest.skill_dir != skill_dir:
-        report.error(f"{MANIFEST} registra o skill em {manifest.skill_dir}, mas ele está em {skill_dir}")
+        recorded = manifest.skill_dir
+        report.error(t("bootstrap.doctor.manifest_dir", manifest=MANIFEST, recorded=recorded, skill_dir=skill_dir))
     elif skill_dir != "." and manifest.version != skill_version():
-        report.todo(
-            f"os arquivos gerados são da versão {manifest.version} e a cópia é a {skill_version()}: "
-            "rode o `update` a partir do clone do skill"
-        )
+        report.todo(t("bootstrap.doctor.manifest_version", recorded=manifest.version, version=skill_version()))
     else:
-        report.ok(f"{MANIFEST}: versão {manifest.version}, {len(manifest.files)} arquivo(s) gerado(s)")
+        count = len(manifest.files)
+        report.ok(t("bootstrap.doctor.manifest_ok", manifest=MANIFEST, version=manifest.version, count=count))
 
-    values = template_values(root, skill_dir, cfg.default_branch, cfg, git)
-    for name, content in planned_files(values, selftest=False).items():
+    by_language = planned_by_language(root, skill_dir, cfg.default_branch, cfg, git, selftest=False)
+    for name, content in by_language[cfg.language].items():
         target = root / name
         optional = name.endswith("semver-analysis.yml")
         current = _read(target)
         if current is None:
-            (report.ok if optional else report.todo)(
-                f"{name} ausente" + (" (opcional)" if optional else ": rode `bootstrap.py init`")
-            )
+            if optional:
+                report.ok(t("bootstrap.doctor.absent_optional", name=name))
+            else:
+                report.todo(t("bootstrap.doctor.absent", name=name))
             continue
         problems = workflow_problems(name, current, cfg, skill_dir) if ".github/workflows/" in name else []
         for problem in problems:
-            report.error(f"{name} não corresponde à configuração: {problem}")
-        if ".github/workflows/" not in name or current == content:
+            report.error(t("bootstrap.doctor.mismatch", name=name, problem=problem))
+        # Um modelo não editado, mas de outro idioma: a chave `language` mudou e falta o `update`.
+        other = None
+        if current != content:
+            others = (lang for lang in by_language if lang != cfg.language)
+            other = next((lang for lang in others if by_language[lang].get(name) == current), None)
+        if other is not None:
+            report.todo(t("bootstrap.doctor.other_language", name=name, found=other, language=cfg.language))
+        elif ".github/workflows/" not in name or current == content:
             report.ok(name)
         elif manifest is not None and manifest.pristine(name, current):
-            report.todo(
-                f"{name} foi gerado pelo skill e não foi editado, mas não corresponde ao modelo desta versão com a "
-                "configuração atual: regenere com o `update` a partir do clone do skill"
-            )
+            report.todo(t("bootstrap.doctor.stale", name=name))
         elif not problems:
-            report.todo(f"{name} difere do modelo do skill (personalizado ou desatualizado)")
+            report.todo(t("bootstrap.doctor.differs", name=name))
+    language_report(report, root, cfg, manifest)
     template = root / ".github/pull_request_template.md"
     try:
         template_text = template.read_text(encoding="utf-8") if template.is_file() else None
     except UnicodeDecodeError:
-        report.error(f"{template.relative_to(root).as_posix()} não está em UTF-8; salve o arquivo em UTF-8.")
+        report.error(t("bootstrap.doctor.template_encoding", path=template.relative_to(root).as_posix()))
         template_text = None
     if template_text is not None:
         present = sections(template_text)
-        missing = [name for name in cfg.pr["required_sections"] if normalize_title(name) not in present]
+        missing = [name for name in cfg.pr["required_sections"] if find_section(present, name) is None]
         if missing:
-            report.error(f"o modelo de PR não tem as seções exigidas em pr.required_sections: {', '.join(missing)}")
+            report.error(t("bootstrap.doctor.template_sections", missing=", ".join(missing)))
 
     hook_report(report, hook_path(git), skill_dir)
     claude_hooks_report(report, root, skill_dir)
@@ -1007,39 +1227,34 @@ def doctor(_args: argparse.Namespace) -> int:
         for problem in problems:
             report.error(problem)
         if not problems:
-            report.ok(f"{len(cfg.versioning['files'])} entrada(s) de arquivo de versão coerentes com {files_version}")
+            report.ok(t("bootstrap.doctor.version_files", count=len(cfg.versioning["files"]), version=files_version))
         if latest is None:
-            report.todo(
-                f"sem tag de versão: crie a linha de base com `release.py baseline --push` ({cfg.tag_prefix}{current})"
-            )
+            report.todo(t("bootstrap.doctor.no_tag", tag=f"{cfg.tag_prefix}{current}"))
         else:
-            report.ok(f"última tag de versão: {latest[0]}")
+            report.ok(t("bootstrap.doctor.tag", tag=latest[0]))
 
     repository = current_repository(git)
     github = GitHub(repository)
     if not github.enabled:
-        report.todo("sem acesso ao GitHub (gh ou GITHUB_REPOSITORY): labels e permissões não conferidos")
+        report.todo(t("bootstrap.doctor.offline"))
     else:
         completed = run_gh(["label", "list", "--repo", str(repository), "--limit", "300", "--json", "name"])
         if completed.returncode != 0:
-            report.todo(f"não consegui listar labels: {completed.stderr.strip() or 'gh indisponível'}")
+            error = completed.stderr.strip() or t("bootstrap.doctor.gh_unavailable")
+            report.todo(t("bootstrap.doctor.labels_error", error=error))
         else:
             existing = {item["name"] for item in json.loads(completed.stdout or "[]")}
             missing = [name for name in cfg.all_labels() if name not in existing]
             if missing:
-                report.todo(f"labels ausentes: {', '.join(missing)} (rode `github_issues.py sync-labels`)")
+                report.todo(t("bootstrap.doctor.labels_missing", labels=", ".join(missing)))
             else:
-                report.ok(f"{len(cfg.all_labels())} labels do fluxo existem no GitHub")
+                report.ok(t("bootstrap.doctor.labels_ok", count=len(cfg.all_labels())))
         permissions = github.api("actions/permissions/workflow") if cfg.release["mode"] == "pull-request" else None
         if permissions and not permissions.get("can_approve_pull_request_reviews"):
-            report.todo(
-                'modo pull-request: habilite "Allow GitHub Actions to create and approve pull requests" nas configurações do Actions'
-            )
-    print(
-        "\nPassos de quem é dono, que este comando não consegue conferir: check obrigatório na proteção de branch, "
-        f"segredos opcionais (RELEASE_TOKEN, ANTHROPIC_API_KEY). Veja {skill_dir}/references/installation.md."
-    )
-    print(f"\n{report.errors} erro(s), {report.pending} pendência(s).")
+            report.todo(t("bootstrap.doctor.pr_permission"))
+        protection_report(report, github, cfg.default_branch, required_check(cfg.language))
+    print(t("bootstrap.doctor.owner_steps", check=required_check(cfg.language), skill_dir=skill_dir))
+    print(t("bootstrap.doctor.summary", errors=report.errors, pending=report.pending))
     return 1 if report.errors else 0
 
 
@@ -1049,40 +1264,48 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return _main(argv)
     except (CommandError, ConfigError, ReleaseError) as exc:
-        print(f"ERRO: {exc}", file=sys.stderr)
+        print(t("bootstrap.error", message=exc), file=sys.stderr)
         return 1
     except UnicodeDecodeError as exc:
-        print(f"ERRO: um arquivo lido não está em UTF-8 ({exc.reason}); salve-o em UTF-8.", file=sys.stderr)
+        print(t("bootstrap.error", message=t("bootstrap.encoding", reason=exc.reason)), file=sys.stderr)
         return 1
     except (OSError, ValueError) as exc:
-        print(f"ERRO: {exc}", file=sys.stderr)
+        print(t("bootstrap.error", message=exc), file=sys.stderr)
         return 1
+
+
+def _activate_project_language() -> None:
+    """Mensagens (e a ajuda) no idioma do projeto desde o começo; configuração inválida fica para o comando."""
+    try:
+        load(find_root())
+    except (ConfigError, OSError, ValueError):
+        i18n.activate(i18n.DEFAULT_LANGUAGE)
 
 
 def _main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="bootstrap.py", description="Instala e confere o skill dev-workflow.")
+    _activate_project_language()
+    parser = argparse.ArgumentParser(prog="bootstrap.py", description=t("bootstrap.help.description"))
     sub = parser.add_subparsers(dest="command", required=True)
     command = sub.add_parser("init")
+    command.add_argument("--skill-dir", default="", help=t("bootstrap.help.skill_dir", default=VENDOR_PATH))
     command.add_argument(
-        "--skill-dir", default="", help=f"onde copiar o skill, relativo à raiz (padrão: {VENDOR_PATH})"
+        "--language", default="", help=t("bootstrap.help.language", accepted=", ".join(i18n.LANGUAGES))
     )
     command.add_argument("--default-branch", default="")
     command.add_argument("--initial-version", default="")
-    command.add_argument("--force", action="store_true", help="troca arquivos que já existem")
+    command.add_argument("--force", action="store_true", help=t("bootstrap.help.force_init"))
     command.add_argument("--no-labels", action="store_true")
-    command.add_argument("--selftest", action="store_true", help="instala também o workflow de autoteste do skill")
+    command.add_argument("--selftest", action="store_true", help=t("bootstrap.help.selftest"))
     command.add_argument("--dry-run", action="store_true")
-    command = sub.add_parser("update", help="troca a cópia do skill no projeto por esta versão")
-    command.add_argument(
-        "--force", action="store_true", help="volta a uma versão anterior e troca modelos personalizados"
-    )
+    command = sub.add_parser("update", help=t("bootstrap.help.update"))
+    command.add_argument("--force", action="store_true", help=t("bootstrap.help.force_update"))
     command.add_argument("--dry-run", action="store_true")
-    command = sub.add_parser("uninstall", help="remove o que o fluxo gerou e não foi personalizado")
-    command.add_argument("--yes", action="store_true", help="remove de fato; sem ele, só lista")
+    command = sub.add_parser("uninstall", help=t("bootstrap.help.uninstall"))
+    command.add_argument("--yes", action="store_true", help=t("bootstrap.help.yes"))
     command = sub.add_parser("install-hook")
     command.add_argument("--force", action="store_true")
     sub.add_parser("doctor")
-    sub.add_parser("version", help="mostra a versão do skill")
+    sub.add_parser("version", help=t("bootstrap.help.version"))
     args = parser.parse_args(argv)
     if args.command == "init":
         return init(args)
@@ -1097,8 +1320,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
         root = find_root()
         skill_dir = skill_dir_in(root)
         if skill_dir is None:
-            print("ERRO: o skill está fora deste repositório; rode `bootstrap.py init` primeiro.", file=sys.stderr)
-            return 1
+            return _refuse(t("bootstrap.install_hook.outside"))
         print(install_hook(root, skill_dir, force=args.force))
         return 0
     return doctor(args)

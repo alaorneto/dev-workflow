@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import re
 import unicodedata
 from collections.abc import Iterable, Iterator
@@ -210,8 +211,32 @@ def sections(body: str) -> dict[str, str]:
     return result
 
 
+@functools.cache
+def _equivalent_titles() -> dict[str, tuple[str, ...]]:
+    """``{título normalizado: os equivalentes em outros idiomas}``, a partir de ``i18n.section_groups``."""
+    table: dict[str, tuple[str, ...]] = {}
+    for group in i18n.section_groups():
+        names = sorted({normalize_title(name) for name in group})
+        for name in names:
+            table[name] = tuple(other for other in names if other != name)
+    return table
+
+
+def find_section(found: dict[str, str], title: str) -> str | None:
+    """O texto da seção ``title`` num resultado de ``sections``.
+
+    Vale o título exato e, se ele não estiver lá, o mesmo título em outro idioma (``## Version`` num
+    projeto em português, ``## Versão`` num em inglês): a troca de idioma não quebra issues e PRs
+    abertos antes dela. Um título que não é equivalente de nenhum continua faltando.
+    """
+    wanted = normalize_title(title)
+    if wanted in found:
+        return found[wanted]
+    return next((found[name] for name in _equivalent_titles().get(wanted, ()) if name in found), None)
+
+
 def section(body: str, title: str) -> str | None:
-    return sections(body).get(normalize_title(title))
+    return find_section(sections(body), title)
 
 
 def meaningful(text: str | None) -> str:

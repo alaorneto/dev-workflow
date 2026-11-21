@@ -1,6 +1,6 @@
 # Configuração: `.github/dev-workflow.toml`
 
-Os scripts procuram, nesta ordem: a variável `DEV_WORKFLOW_CONFIG`, `.github/dev-workflow.toml`, `dev-workflow.toml`, `.dev-workflow.toml`. Sem arquivo, valem os padrões (suficientes para o hook `commit-msg`). As tabelas do arquivo se sobrepõem aos padrões chave a chave; `types`, `labels.extra`, `issues.sections`, `commits.levels` e todas as listas substituem o padrão por inteiro. Valor inválido é recusado com a chave na mensagem. Modelo comentado: `assets/dev-workflow.toml`.
+Os scripts procuram, nesta ordem: a variável `DEV_WORKFLOW_CONFIG`, `.github/dev-workflow.toml`, `dev-workflow.toml`, `.dev-workflow.toml`. Sem arquivo, valem os padrões (suficientes para o hook `commit-msg`). As tabelas do arquivo se sobrepõem aos padrões chave a chave; `types`, `labels.extra`, `issues.sections`, `commits.levels` e todas as listas substituem o padrão por inteiro. Valor inválido é recusado com a chave na mensagem. Modelo comentado: `assets/dev-workflow.toml` (em inglês, `assets/locales/en/dev-workflow.toml`).
 
 **Validação.** A configuração é conferida na carga, antes de qualquer comando: chave desconhecida é erro e a mensagem sugere a chave mais parecida (`pr.severity.titel` → `title`); valor de tipo errado é erro com a chave (`exempt_authors = "dependabot[bot]"` precisa ser lista); `search` de `[[versioning.files]]` precisa de um marcador `{current…}` e `regex` precisa compilar. Sem `pr.title_pattern` explícito, um projeto que redefine `[types]` aceita no título do PR os prefixos de todos os tipos, mais `revert`: um tipo novo com prefixo `hotfix` vale sem mexer no padrão. Uma issue citada por um PR sem exatamente um label de tipo aparece como nota no plano de versão, porque o tipo dela não conta.
 
@@ -28,11 +28,18 @@ O idioma troca os **padrões** abaixo. O que o projeto escreve no arquivo contin
 
 Não mudam com o idioma: os nomes dos labels, os prefixos de commit, o assunto do commit de release, as marcas em comentário HTML e as opções de linha de comando.
 
+O idioma também decide o que o `bootstrap.py` gera ([instalação](installation.md#idioma)):
+
+- os formulários de issue, o modelo de PR e a configuração inicial vêm de `assets/locales/<idioma>/` (os de `pt-BR` continuam em `assets/`), com os rótulos iguais aos nomes de seção da tabela acima;
+- os workflows têm um modelo só; mudam os nomes de exibição (do workflow, dos jobs e dos passos), as descrições das entradas manuais e as mensagens dos passos. O nome do job de `pr-check.yml` é o check obrigatório da proteção de branch: `Verificação do PR` em `pt-BR`, `PR check` em `en`.
+
+**Nomes de seção equivalentes.** O check do PR e a leitura das issues aceitam o nome de uma seção padrão em qualquer idioma: um PR com `## Version` passa num projeto em `pt-BR`, e uma issue com `## Critérios de aceite` vale num projeto em `en`. A equivalência sai da posição de cada nome nos padrões dos idiomas (`issues.sections`, `pr.required_sections`, `issues.acceptance_section`, `pr.version_section`, `pr.tests_section`, `pr.docs_section`, `issues.items_section`), então vale para os nomes padrão; uma seção própria do projeto só casa com o próprio nome. Por isso trocar o idioma não quebra as issues e os PRs abertos antes da troca.
+
 Limites desta versão:
 
-- Com `en`, saem em inglês os padrões da tabela e as mensagens que já estão no catálogo (`scripts/devflow/locales/`). As demais mensagens dos scripts ainda saem em português.
-- Os modelos de issue e de PR que o `bootstrap.py` instala continuam em português: as seções deles não são as que os padrões em inglês exigem. Até os modelos em inglês existirem, quem usa `en` ajusta os modelos à mão.
-- Trocar o idioma de um projeto em uso muda os nomes de seção que o check exige nas issues e nos PRs abertos.
+- Com `en`, saem em inglês os padrões da tabela, o que o `bootstrap.py` gera e escreve e as mensagens que já estão no catálogo (`scripts/devflow/locales/`). As mensagens que ainda não estão nele saem em português.
+- A equivalência vale para os títulos de seção. O marcador do motivo de sobreposição (`pr.override_reason_marker`) e a seção de itens de um epic aberto antes da troca (`issues.items_section`, lida por `sync-checklist`) ainda são procurados só pelo nome do idioma configurado.
+- Os comentários dos workflows gerados e o `SKILL.md` e os documentos de `references/` continuam em português.
 
 ## `[repository]`
 
