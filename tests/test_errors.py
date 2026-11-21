@@ -148,6 +148,18 @@ class CommandFailureTest(SandboxCase):
             "não é JSON válido",
         )
 
+    def test_doctor_names_a_version_file_that_is_not_utf8(self):
+        (Path(self.box.work) / "pyproject.toml").write_bytes('[project]\n# descrição\nversion = "1.2.0"\n'.encode("latin-1"))
+        completed = self.box.run("bootstrap.py", "doctor", env={"DEV_WORKFLOW_OFFLINE": "1"})
+        self.assertNotIn("Traceback", completed.stderr)
+        self.assertIn("pyproject.toml: não está em UTF-8", completed.stdout + completed.stderr)
+
+    def test_bootstrap_with_a_failing_gh_ends_without_traceback(self):
+        broken = self._fake("import sys\nsys.stderr.write('gh: boom (HTTP 500)\\n')\nsys.exit(1)\n")
+        completed = self.box.run("bootstrap.py", "doctor", env={"DEV_WORKFLOW_GH": broken, "DEV_WORKFLOW_RETRIES": "1"})
+        self.assertNotIn("Traceback", completed.stderr)
+        self.assertIn(completed.returncode, (0, 1))
+
     def test_a_missing_analysis_file_has_its_own_message(self):
         completed = self.box.run("release.py", "run", "--dry-run", "--analysis-file", "nao-existe.json")
         self.assertReadable(completed, "nao-existe.json", "não existe")

@@ -520,6 +520,8 @@ def load(root: Path | None = None) -> Config:
         return cfg
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        raise ConfigError(f"{path}: não está em UTF-8; salve o arquivo em UTF-8.") from None
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"{path}: {exc}") from exc
     cfg = Config(data, path=path, root=root)

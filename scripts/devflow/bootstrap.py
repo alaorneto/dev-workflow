@@ -32,9 +32,9 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from .config import CONFIG_CANDIDATES, Config, ConfigError, find_root, load
-from .gh import Git, GitHub, current_repository, offline, run_gh, utf8_streams
+from .gh import CommandError, Git, GitHub, current_repository, offline, run_gh, utf8_streams
 from .plan import Repo
-from .release import check_version_files
+from .release import ReleaseError, check_version_files
 from .semver import Version
 from .text import normalize_title, sections
 
@@ -967,8 +967,13 @@ def doctor(_args: argparse.Namespace) -> int:
         elif not problems:
             report.todo(f"{name} difere do modelo do skill (personalizado ou desatualizado)")
     template = root / ".github/pull_request_template.md"
-    if template.is_file():
-        present = sections(template.read_text(encoding="utf-8"))
+    try:
+        template_text = template.read_text(encoding="utf-8") if template.is_file() else None
+    except UnicodeDecodeError:
+        report.error(f"{template.relative_to(root).as_posix()} não está em UTF-8; salve o arquivo em UTF-8.")
+        template_text = None
+    if template_text is not None:
+        present = sections(template_text)
         missing = [name for name in cfg.pr["required_sections"] if normalize_title(name) not in present]
         if missing:
             report.error(f"o modelo de PR não tem as seções exigidas em pr.required_sections: {', '.join(missing)}")
@@ -1021,7 +1026,22 @@ def doctor(_args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Códigos de saída: 0 ok, 1 falha (``doctor`` com erro ou erro de operação), 2 uso."""
     utf8_streams()
+    try:
+        return _main(argv)
+    except (CommandError, ConfigError, ReleaseError) as exc:
+        print(f"ERRO: {exc}", file=sys.stderr)
+        return 1
+    except UnicodeDecodeError as exc:
+        print(f"ERRO: um arquivo lido não está em UTF-8 ({exc.reason}); salve-o em UTF-8.", file=sys.stderr)
+        return 1
+    except (OSError, ValueError) as exc:
+        print(f"ERRO: {exc}", file=sys.stderr)
+        return 1
+
+
+def _main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bootstrap.py", description="Instala e confere o skill dev-workflow.")
     sub = parser.add_subparsers(dest="command", required=True)
     command = sub.add_parser("init")

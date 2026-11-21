@@ -172,6 +172,10 @@ def apply_version_files(
         if entry["path"] not in contents:
             try:
                 original = path.read_bytes().decode("utf-8")
+            except UnicodeDecodeError:
+                raise ReleaseError(
+                    f"{entry['path']}: não está em UTF-8; converta o arquivo (a versão é escrita em UTF-8)."
+                ) from None
             except OSError as exc:
                 raise ReleaseError(f"{entry['path']}: não consegui ler ({exc}).") from exc
             contents[entry["path"]] = (original, original)
