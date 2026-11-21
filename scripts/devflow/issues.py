@@ -24,7 +24,7 @@ from typing import Any
 
 from . import epics
 from .config import Config, ConfigError, load
-from .gh import Git, GitHub, current_repository, is_trusted_author, label_names, run_gh, utf8_streams
+from .gh import CommandError, Git, GitHub, current_repository, is_trusted_author, label_names, run_gh, utf8_streams
 from .text import (
     checkboxes,
     clean_message,
@@ -518,7 +518,22 @@ def _sync_command(name: str, args: Sequence[str]) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Códigos de saída: 0 ok, 1 falha (verificação reprovada ou erro de operação), 2 uso ou configuração."""
     utf8_streams()
+    try:
+        return _main(argv)
+    except CommandError as exc:
+        print(f"ERRO: {exc}", file=sys.stderr)
+        return 1
+    except (RuntimeError, OSError, ValueError) as exc:
+        if isinstance(exc, ConfigError):
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(f"ERRO: {exc}", file=sys.stderr)
+        return 1
+
+
+def _main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
         cfg = load()
