@@ -184,16 +184,35 @@ class Sandbox:
         mutate(state)
         self.write_state(state)
 
-    def issue(self, number, title, *labels, body=""):
+    def issue(self, number, title, *labels, body="", state="open"):
         issue = {
             "number": number,
             "title": title,
             "body": body,
-            "state": "open",
+            "state": state,
             "labels": [{"name": name} for name in labels],
             "milestone": None,
         }
-        self.update_state(lambda state: state["issues"].__setitem__(str(number), issue))
+        self.update_state(lambda data: data["issues"].__setitem__(str(number), issue))
+
+    def fill_comments(self, number, count, *, login="bob", association="NONE", body="+1"):
+        """``count`` comentários de uma vez, para passar das páginas da API (100 por página)."""
+
+        def mutate(state):
+            comments = state["comments"].setdefault(str(number), [])
+            start = 7000 + sum(len(items) for items in state["comments"].values())
+            for index in range(count):
+                comments.append(
+                    {
+                        "id": start + index,
+                        "body": f"{body} ({index})",
+                        "user": {"login": login},
+                        "author_association": association,
+                        "created_at": f"2028-01-01T00:{index // 60:02d}:{index % 60:02d}Z",
+                    }
+                )
+
+        self.update_state(mutate)
 
     def head_of(self, number):
         """O ``head.sha`` do PR simulado: o último commit que uma análise precisa ter visto."""
@@ -238,16 +257,29 @@ class Sandbox:
         base="main",
         branch=None,
         fork=None,
+        rebase=False,
     ):
         """Cria a branch, commita, mescla em ``base`` como o GitHub faria e registra o PR.
 
-        ``fork`` é o repositório de origem (``dono/nome``) quando o PR não sai deste.
+        ``fork`` é o repositório de origem (``dono/nome``) quando o PR não sai deste. ``rebase``
+        imita "Rebase and merge": os commits entram um a um no primeiro pai, sem commit de merge,
+        e só a API (``commits/<sha>/pulls``) liga cada um ao PR.
         """
         branch = branch or f"work/{number}"
         source = fork or REPOSITORY
         commit_list = self._commit_all(branch, commits, base)
         self.git("switch", "-q", base)
-        if squash:
+        rebased = []
+        if rebase:
+            before = self.git("rev-parse", "HEAD")
+            self.git("rebase", "-q", base, branch)
+            self.git("switch", "-q", base)
+            self.git("merge", "-q", "--ff-only", branch)
+            rebased = self.git("rev-list", "--reverse", f"{before}..HEAD").splitlines()
+            commit_list = [
+                {"sha": sha, "commit": {"message": self.git("log", "-1", "--format=%B", sha)}} for sha in rebased
+            ]
+        elif squash:
             self.git("merge", "-q", "--squash", branch)
             self.git("commit", "-q", "-m", f"{title} (#{number})")
         else:
@@ -275,6 +307,8 @@ class Sandbox:
             "commit_list": commit_list,
             "milestone": None,
         }
+        if rebased:
+            pull["commit_shas"] = rebased
         self.update_state(lambda state: state["pulls"].__setitem__(str(number), pull))
         return pull
 
