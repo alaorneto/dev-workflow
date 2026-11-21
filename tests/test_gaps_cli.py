@@ -76,7 +76,7 @@ class StartTest(SandboxCase):
         for args in (("start",), ("start", "abc")):
             completed = self.box.run("github_issues.py", *args)
             self.assertEqual(completed.returncode, 2)
-            self.assertIn("uso: github_issues.py", completed.stderr)
+            self.assertIn("usage: github_issues.py start", completed.stderr)
 
 
 class SyncLabelsTest(SandboxCase):

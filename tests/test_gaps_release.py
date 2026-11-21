@@ -153,7 +153,7 @@ class PaginationTest(SandboxCase):
         box.comment(
             10,
             "<!-- dev-workflow:analysis\n"
-            '{"schema": 1, "base": "v1.2.0", "head": "abc1234", "changes": '
+            f'{{"schema": 1, "base": "v1.2.0", "head": "{box.head_of(10)}", "changes": '
             '[{"pr": 10, "level": "major", "summary": "fetch() exige um argumento", "evidence": []}]}\n-->\nanálise',
         )
         self.assertRan(box.release())
