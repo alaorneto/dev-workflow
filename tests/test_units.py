@@ -194,6 +194,8 @@ class TextTest(unittest.TestCase):
     def test_slug(self):
         self.assertEqual(slugify("Corrigir a origem pública do e-mail!"), "corrigir-a-origem-publica-do-e-mail")
         self.assertLessEqual(len(slugify("x" * 200)), 40)
+        self.assertEqual(slugify("exportar o relatorio mensal em csv com filtros"), "exportar-o-relatorio-mensal-em-csv-com")
+        self.assertEqual(slugify("abcd efgh", limit=4), "abcd")
         self.assertEqual(slugify("???"), "trabalho")
 
 

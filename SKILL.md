@@ -72,9 +72,9 @@ Antes da primeira edição de arquivo versionado, identifique a issue (número c
 
 ## 4. Branch, commits e progresso
 
-- Branch a partir da branch padrão atualizada: `python3 S/github_issues.py start <N>` cria `<prefixo>/<N>-<slug>` pelo tipo e título da issue (`--dry-run` só mostra o nome). Com a árvore suja ou outra branch de trabalho em uso, pergunte antes de trocar.
+- Branch a partir da branch padrão atualizada: `python3 S/github_issues.py start <N>` cria `<prefixo>/<N>-<slug>` pelo tipo e título da issue (`--dry-run` só mostra o nome; `--help` em qualquer subcomando mostra o uso). Se a branch já existe, ele troca para ela; arquivo não rastreado não impede a troca, mudança em arquivo rastreado sim. Com a árvore suja ou outra branch de trabalho em uso, pergunte antes de trocar.
 - Commit só quando o usuário pedir. Mensagem `<tipo>(<escopo>): <assunto>`, corpo com o porquê, trailer `Refs #N`. Quebra de compatibilidade leva `!` depois do tipo ou rodapé `BREAKING CHANGE: <o que muda e como migrar>`: é o marcador que a automação de versão lê.
-- O hook `commit-msg` acrescenta `Refs: #N` a partir do nome da branch e recusa commit sem referência. Não use `--no-verify`: o hook é a barreira que mantém o vínculo.
+- O hook `commit-msg` acrescenta `Refs: #N` a partir do nome da branch (só no formato `<prefixo>/<N>-`, com o prefixo de um tipo) e recusa commit sem referência. O sufixo `(#N)` e a referência a outro repositório não contam; só um merge de verdade dispensa a referência. Não use `--no-verify`: o hook é a barreira que mantém o vínculo.
 - Marque um critério de aceite só depois de verificá-lo de fato. Registre decisões e bloqueios em comentário na issue.
 
 ## 5. Pull request

@@ -266,8 +266,68 @@ class CommitMsgHookTest(SandboxCase):
         self.assertIn("Refs: #42", message)
 
     def test_generated_commits_and_the_release_commit_pass(self):
-        for message in ("Merge branch 'main' into x\n", 'Revert "feat: x"\n', "chore(release): v1.2.1\n\nnotas\n"):
+        for message in ('Revert "feat: x"\n', "chore(release): v1.2.1\n\nnotas\n"):
             self.assertEqual(self._run(message)[0].returncode, 0, message)
+
+    def test_only_a_real_merge_is_exempt(self):
+        self.assertEqual(self._run("Merge the two parsers\n")[0].returncode, 1)
+        box = self.box
+        box.git("switch", "-q", "-c", "side")
+        box.write({"side.txt": "x"})
+        box.git("add", "-A")
+        box.git("commit", "-q", "-m", "feat: side\n\nRefs #1")
+        box.git("switch", "-q", "main")
+        box.git("merge", "-q", "--no-ff", "--no-commit", "side")
+        self.assertEqual(self._run("Merge branch 'side'\n")[0].returncode, 0)
+
+    def test_the_squash_suffix_and_other_repositories_are_not_links(self):
+        self.assertEqual(self._run("feat: x (#12)\n")[0].returncode, 1)
+        self.assertEqual(self._run("feat: x\n\nRefs other/repo#5\n")[0].returncode, 1)
+        self.assertEqual(self._run("feat: x\n\nRefs acme/demo#5\n")[0].returncode, 0)
+
+    def test_a_branch_that_only_looks_numbered_gives_no_issue(self):
+        completed, message = self._run("feat: x\n", branch="feature/2024-q1-plan")
+        self.assertEqual(completed.returncode, 1)
+        self.assertNotIn("Refs: #2024", message)
+
+
+class IssuesCliTest(SandboxCase):
+    def test_help_and_unknown_options(self):
+        for args in (("--help",), ("start", "--help"), ("check-pr", "--help")):
+            completed = self.box.run("github_issues.py", *args)
+            self.assertEqual(completed.returncode, 0, args)
+            self.assertIn("usage:", completed.stdout)
+        self.assertEqual(self.box.run("github_issues.py", "check-pr", "--bogus").returncode, 2)
+        self.assertEqual(self.box.run("github_issues.py", "start", "x").returncode, 2)
+        self.assertEqual(self.box.run("github_issues.py").returncode, 2)
+
+    def _issue(self, number, title):
+        self.box.issue(number, title, "feature")
+
+    def test_start_ignores_untracked_files_and_switches_to_an_existing_branch(self):
+        box = self.box
+        self._issue(7, "Exportar o relatório mensal em CSV com filtros por período")
+        box.write({"rascunho.txt": "não rastreado"})
+        box.git("reset", "-q")  # o arquivo novo fica fora do índice: não rastreado
+        box.git("rm", "-q", "--cached", "rascunho.txt", check=False)
+        first = box.run("github_issues.py", "start", "7")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        branch = box.git("symbolic-ref", "--short", "HEAD")
+        self.assertTrue(branch.startswith("feat/7-exportar-o-relatorio-mensal-em-csv"), branch)
+        box.git("switch", "-q", "main")
+        again = box.run("github_issues.py", "start", "7")
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertIn("já existe", again.stdout)
+        self.assertEqual(box.git("symbolic-ref", "--short", "HEAD"), branch)
+
+    def test_the_slug_ends_at_a_word_boundary(self):
+        self._issue(8, "Exportar o relatório mensal em CSV com filtros por período")
+        name = self.box.run("github_issues.py", "start", "8", "--dry-run").stdout.strip()
+        slug = name.split("/", 1)[1].split("-", 1)[1]
+        words = "exportar-o-relatorio-mensal-em-csv-com-filtros-por-periodo".split("-")
+        self.assertLessEqual(len(slug), 40)
+        self.assertTrue(set(slug.split("-")) <= set(words), slug)
+        self.assertTrue("exportar-o-relatorio-mensal-em-csv-com-filtros-por-periodo".startswith(slug + "-"), slug)
 
 
 class BootstrapTest(unittest.TestCase):
