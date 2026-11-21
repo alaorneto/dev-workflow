@@ -197,6 +197,14 @@ MESSAGES: dict[str, str] = {
     "check.request.refused": (
         "PR #{pr}: o pedido `{label}` não pode ser publicado ({count} problema(s) acima). Corrija ou retire o label."
     ),
+    # === issues.py, text.py, epics.py (#37): as chaves deste módulo ====================================
+    # (fim de issues)
+    # === config.py, semver.py, gh.py, plan.py (#38): as chaves deste módulo ==============================
+    # (fim de plan)
+    # === release.py (#39): as chaves deste módulo =====================================================
+    # (fim de release)
+    # === bootstrap.py (#40): as chaves deste módulo =================================================
+    # (fim de bootstrap)
     # --- labels (o GitHub limita a descrição a 100 caracteres) ----------------------------------
     "label.prerelease": "O merge publica uma pré-release {channel} com tudo que está acumulado",
     "label.epic": "Acompanhamento de um plano com várias issues",

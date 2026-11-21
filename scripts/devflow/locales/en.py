@@ -205,6 +205,14 @@ MESSAGES: dict[str, str] = {
     "check.request.refused": (
         "PR #{pr}: the `{label}` request cannot be published ({count} problem(s) above). Fix it or remove the label."
     ),
+    # === issues.py, text.py, epics.py (#37): as chaves deste módulo ====================================
+    # (fim de issues)
+    # === config.py, semver.py, gh.py, plan.py (#38): as chaves deste módulo ==============================
+    # (fim de plan)
+    # === release.py (#39): as chaves deste módulo =====================================================
+    # (fim de release)
+    # === bootstrap.py (#40): as chaves deste módulo =================================================
+    # (fim de bootstrap)
     # --- labels (GitHub limits the description to 100 characters) -------------------------------
     "label.prerelease": "Merging publishes a {channel} pre-release with everything accumulated",
     "label.epic": "Tracks a plan made of several issues",
