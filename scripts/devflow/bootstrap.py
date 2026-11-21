@@ -166,7 +166,14 @@ def render_version_files(entries: list[dict[str, str]]) -> str:
     return "\n".join(blocks)
 
 
+# Linha condicional de um modelo: ``conteúdo  # __IF_NOME__`` só fica se ``values["IF_NOME"]`` não é vazio.
+_CONDITIONAL = re.compile(r"^(?P<line>.*?)[ \t]*# __IF_(?P<flag>\w+)__[ \t]*(?:\n|\Z)", re.MULTILINE)
+
+
 def render(template: str, values: dict[str, str]) -> str:
+    template = _CONDITIONAL.sub(
+        lambda match: match["line"] + "\n" if values.get(f"IF_{match['flag']}") else "", template
+    )
     for key, value in values.items():
         template = template.replace(f"__{key}__", value)
     return template
@@ -197,6 +204,8 @@ def template_values(root: Path, skill_dir: str, branch: str, cfg: Config | None,
         "RELEASE_LABEL": cfg.label("release") if cfg else "release",
         "PRERELEASE_PREFIX": cfg.label("prerelease_prefix") if cfg else "release:",
         "REPOSITORY_URL": f"https://github.com/{repository}",
+        # `actions: write` no release.yml só quando há workflow de publicação a disparar.
+        "IF_DISPATCH": "1" if cfg and cfg.release["dispatch_workflow"] else "",
     }
 
 
@@ -799,6 +808,9 @@ def workflow_problems(name: str, text: str, cfg: Config, skill_dir: str) -> list
         branches = [item.strip().strip("'\"") for item in match.group("items").split(",")] if match else []
         if match and cfg.default_branch not in branches:
             problems.append(f"não roda no push da branch padrão {cfg.default_branch} (branches: {', '.join(branches)})")
+    dispatch = cfg.release["dispatch_workflow"]
+    if name.endswith("/release.yml") and dispatch and not re.search(r"^\s*actions:\s*write\b", text, re.MULTILINE):
+        problems.append(f"release.dispatch_workflow ({dispatch}) precisa de `actions: write`")
     if name.endswith("/semver-analysis.yml"):
         release, prefix = cfg.label("release"), cfg.label("prerelease_prefix")
         if f"'{release}'" not in text or f"',{prefix}'" not in text:

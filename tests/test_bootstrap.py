@@ -1,6 +1,7 @@
 """Bootstrap: caminho do skill, manifesto, update atômico, desinstalação e doctor."""
 
 import json
+import re
 import unittest
 
 import support  # noqa: F401  (põe scripts/ no sys.path antes de importar devflow)
@@ -12,8 +13,9 @@ from devflow.bootstrap import (
     digest,
     normalize_skill_dir,
     read_manifest,
+    render,
 )
-from support import SCRIPTS, Sandbox
+from support import BASE_CONFIG, SCRIPTS, Sandbox
 
 VENDORED = ".claude/skills/dev-workflow"
 LABELS = '\n[labels]\nrelease = "publicar"\nprerelease_prefix = "canal/"\n'
@@ -332,6 +334,93 @@ class BootstrapLifecycleTest(unittest.TestCase):
         again = box.run(script, "doctor")
         self.assertNotIn("semver-analysis.yml não corresponde", again.stdout)
         self.assertIn("pr-merged.yml não corresponde à configuração", again.stdout)
+
+
+def _jobs(workflow):
+    """``{job: bloco}`` do ``jobs:`` de um workflow (dois espaços de recuo por nível, como os modelos)."""
+    body = workflow.split("\njobs:\n", 1)[1]
+    parts = re.split(r"^  ([\w-]+):\n", body, flags=re.MULTILINE)
+    return dict(zip(parts[1::2], parts[2::2], strict=True))
+
+
+def _steps(job):
+    """Os passos de um job, cada um com o texto dele."""
+    return re.split(r"^      - ", job.split("\n    steps:\n", 1)[1], flags=re.MULTILINE)[1:]
+
+
+class WorkflowHardeningTest(unittest.TestCase):
+    def _box(self, config=BASE_CONFIG):
+        box = Sandbox(config)
+        self.addCleanup(box.close)
+        completed = box.run("bootstrap.py", "init", "--no-labels")
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        return box
+
+    def test_a_conditional_line_stays_only_with_its_flag(self):
+        template = "a: 1\nb: 2 # nota # __IF_X__\nc: 3 # __IF_Y__\n"
+        self.assertEqual(render(template, {"IF_X": "1", "IF_Y": ""}), "a: 1\nb: 2 # nota\n")
+        self.assertEqual(render("x # __IF_X__", {}), "")
+
+    def test_every_job_has_a_time_limit(self):
+        box = self._box()
+        for name in ("pr-check.yml", "pr-merged.yml", "release.yml", "epic-checklist.yml", "semver-analysis.yml"):
+            jobs = _jobs(box.read(f".github/workflows/{name}"))
+            self.assertTrue(jobs, name)
+            for job, block in jobs.items():
+                self.assertRegex(block, r"(?m)^    timeout-minutes: \d+$", f"{name}: {job}")
+        for template in (SCRIPTS.parent / "assets/workflows").glob("*.yml"):
+            if template.name != "dev-workflow-selftest.yml":  # de outra issue
+                for job, block in _jobs(template.read_text(encoding="utf-8")).items():
+                    self.assertIn("timeout-minutes:", block, f"{template.name}: {job}")
+
+    def test_the_analysis_is_recorded_by_a_copy_made_before_the_agent_runs(self):
+        analysis = self._box().read(".github/workflows/semver-analysis.yml")
+        steps = _steps(_jobs(analysis)["analysis"])
+        names = [re.match(r"(?:name: )?(.*)", step).group(1) for step in steps]
+        copy = names.index("Guardar os scripts e a configuração antes do agente")
+        agent = names.index("Analisar com o Claude Code")
+        record = names.index("Registrar a análise no PR")
+        self.assertLess(copy, agent)
+        self.assertLess(agent, record)
+        self.assertIn(f"cp -R {VENDORED}/scripts", steps[copy])
+        self.assertIn('chmod -R a-w "$trusted"', steps[copy])
+        self.assertRegex(steps[agent], r"--max-turns \d+")
+        # o registro não executa nada do workspace: scripts e configuração vêm da cópia, fora dele
+        self.assertNotIn(VENDORED, steps[record])
+        self.assertIn("working-directory: ${{ runner.temp }}", steps[record])
+        self.assertIn('python3 -I "$RUNNER_TEMP/dev-workflow/scripts/release.py" record-analysis', steps[record])
+        self.assertIn("DEV_WORKFLOW_CONFIG: ${{ runner.temp }}/dev-workflow/dev-workflow.toml", steps[record])
+        self.assertIn('--file "$GITHUB_WORKSPACE/semver-analysis.json"', steps[record])
+
+    def test_actions_write_only_comes_with_a_dispatch_workflow(self):
+        box = self._box()
+        self.assertNotIn("actions: write", box.read(".github/workflows/release.yml"))
+        # Configurado depois, o update regenera o release.yml não editado (pelo manifesto).
+        dispatch = '\n[release]\ndispatch_workflow = "publish.yml"\n'
+        box.write({".github/dev-workflow.toml": box.read(".github/dev-workflow.toml") + dispatch})
+        doctor = box.run(str(box.work / VENDORED / "scripts/bootstrap.py"), "doctor")
+        self.assertIn("release.dispatch_workflow (publish.yml) precisa de `actions: write`", doctor.stdout)
+        self.assertEqual(doctor.returncode, 1)
+        self.assertEqual(box.run("bootstrap.py", "update").returncode, 0)
+        release = box.read(".github/workflows/release.yml")
+        self.assertRegex(release, r"(?m)^  actions: write # dispara release\.dispatch_workflow")
+        self.assertNotIn("__IF_", release)
+
+        fresh = self._box(BASE_CONFIG + dispatch)
+        self.assertIn("  actions: write", fresh.read(".github/workflows/release.yml"))
+
+    def test_the_pr_check_reports_success_in_the_merge_queue_without_redoing_it(self):
+        check = self._box().read(".github/workflows/pr-check.yml")
+        self.assertRegex(check, r"(?m)^  merge_group:$")
+        self.assertIn("group: pr-check-${{ github.event.pull_request.number || github.ref }}", check)
+        jobs = _jobs(check)
+        self.assertIn("name: Verificação do PR", jobs["pr-check"])  # o mesmo nome do check obrigatório
+        first, *verification = _steps(jobs["pr-check"])
+        self.assertIn("if: github.event_name == 'merge_group'", first)
+        self.assertRegex(first, r"run: echo ")
+        for step in verification:
+            self.assertRegex(step, r"if: (always\(\) && )?github\.event_name == 'pull_request'", step[:80])
+        self.assertIn("if: github.event_name == 'pull_request' &&", jobs["version-preview"])
 
 
 if __name__ == "__main__":
