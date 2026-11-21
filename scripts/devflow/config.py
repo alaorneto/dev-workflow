@@ -151,28 +151,42 @@ LIST_ITEMS: dict[str, Any] = {
     "changelog.sections": {"id": "", "title": ""},
 }
 OWN_TYPE_MESSAGES = frozenset({"versioning.prerelease", "versioning.prerelease.channels", "labels.prerelease_prefix"})
-_TYPE_NAMES = {bool: "booleano", int: "inteiro", float: "número", str: "texto", list: "lista", dict: "tabela"}
 CURRENT_MARKER = re.compile(r"\{current(?:_[a-z0-9_]+)?\}")
+
+
+def _type_names(language: str) -> dict[type, str]:
+    """O nome de cada tipo do TOML no idioma das mensagens."""
+    return {
+        bool: i18n.translate(language, "config.type.bool"),
+        int: i18n.translate(language, "config.type.int"),
+        float: i18n.translate(language, "config.type.float"),
+        str: i18n.translate(language, "config.type.str"),
+        list: i18n.translate(language, "config.type.list"),
+        dict: i18n.translate(language, "config.type.dict"),
+    }
 
 
 def _kind(value: Any) -> type:
     return bool if isinstance(value, bool) else type(value)
 
 
-def _unknown(key: str, where: str, accepted: Iterable[str]) -> None:
+def _unknown(key: str, where: str, accepted: Iterable[str], language: str = i18n.DEFAULT_LANGUAGE) -> None:
     names = sorted(accepted)
     close = difflib.get_close_matches(key, names, n=1, cutoff=0.6)
-    hint = f" Você quis dizer `{close[0]}`?" if close else f" Aceitas: {', '.join(f'`{n}`' for n in names)}."
-    _fail(where, f"não é uma chave conhecida.{hint}")
+    if close:
+        _fail(where, i18n.translate(language, "config.key.unknown_close", close=close[0]))
+    accepted_names = ", ".join(f"`{n}`" for n in names)
+    _fail(where, i18n.translate(language, "config.key.unknown", accepted=accepted_names))
 
 
-def _check_shape(value: Any, template: Any, where: str) -> None:
+def _check_shape(value: Any, template: Any, where: str, language: str = i18n.DEFAULT_LANGUAGE) -> None:
     """Recusa chave desconhecida e tipo errado, com a chave na mensagem."""
     if where in OPEN_TABLES:
         if not isinstance(value, dict):
-            _fail(where, f"deve ser uma tabela, não {_TYPE_NAMES.get(_kind(value), 'outro tipo')}.")
+            got = _type_names(language).get(_kind(value), i18n.translate(language, "config.type.other"))
+            _fail(where, i18n.translate(language, "config.shape.table", got=got))
         for key, item in value.items():
-            _check_shape(item, OPEN_TABLES[where], f"{where}.{key}")
+            _check_shape(item, OPEN_TABLES[where], f"{where}.{key}", language)
         return
     expected = _kind(template)
     if expected is float and _kind(value) is int:
@@ -180,17 +194,18 @@ def _check_shape(value: Any, template: Any, where: str) -> None:
     if _kind(value) is not expected:
         if where in OWN_TYPE_MESSAGES:
             return  # a validação dessa chave tem mensagem própria, com exemplo
-        got =_TYPE_NAMES.get(_kind(value), type(value).__name__)
-        _fail(where, f"deve ser {_TYPE_NAMES.get(expected, expected.__name__)}, não {got}.")
+        names = _type_names(language)
+        got, wanted = names.get(_kind(value), type(value).__name__), names.get(expected, expected.__name__)
+        _fail(where, i18n.translate(language, "config.shape.type", expected=wanted, got=got))
     if expected is dict:
         for key, item in value.items():
             if key not in template:
-                _unknown(key, f"{where}.{key}" if where else key, template)
-            _check_shape(item, template[key], f"{where}.{key}" if where else key)
+                _unknown(key, f"{where}.{key}" if where else key, template, language)
+            _check_shape(item, template[key], f"{where}.{key}" if where else key, language)
     elif expected is list:
         element = LIST_ITEMS.get(where, template[0] if template else "")
         for index, item in enumerate(value):
-            _check_shape(item, element, f"{where}[{index}]")
+            _check_shape(item, element, f"{where}[{index}]", language)
 
 
 def title_pattern_for(types: dict[str, Any]) -> str:
@@ -212,7 +227,7 @@ class Config:
         if "language" in raw:
             raw["language"] = self.language
         defaults = defaults_for(self.language)
-        _check_shape(raw, {**defaults, "language": ""}, "")
+        _check_shape(raw, {**defaults, "language": ""}, "", self.language)
         self.data = _merge(defaults, raw)
         if "types" in raw and "title_pattern" not in raw.get("pr", {}):
             # Um tipo novo (`hotfix`) vale no título do PR sem o projeto reescrever o padrão.
@@ -230,86 +245,82 @@ class Config:
     def _validate(self) -> None:
         d = self.data
         if d.get("schema") != 1:
-            _fail("schema", "deve ser 1.")
+            _fail("schema", self.t("config.schema"))
         if not isinstance(d["types"], dict) or not d["types"]:
-            _fail("types", "precisa de ao menos um tipo.")
+            _fail("types", self.t("config.types.empty"))
         section_ids = {section.get("id") for section in d["changelog"]["sections"]}
         for needed in (BREAKING_SECTION, FALLBACK_SECTION):
             if needed not in section_ids:
-                _fail("changelog.sections", f"precisa de uma seção com id `{needed}`.")
+                _fail("changelog.sections", self.t("config.changelog.section_missing", id=needed))
         for name, spec in d["types"].items():
             if spec.get("level", "none") not in LEVELS:
-                _fail(f"types.{name}.level", f"deve ser um de {', '.join(LEVELS)}.")
+                _fail(f"types.{name}.level", self.t("config.one_of", accepted=", ".join(LEVELS)))
             if not spec.get("prefixes"):
-                _fail(f"types.{name}.prefixes", "precisa de ao menos um prefixo de commit e branch.")
+                _fail(f"types.{name}.prefixes", self.t("config.types.prefixes"))
             if spec.get("section", FALLBACK_SECTION) not in section_ids:
-                _fail(f"types.{name}.section", "não corresponde a um id de `changelog.sections`.")
+                _fail(f"types.{name}.section", self.t("config.types.section"))
         for hidden in d["changelog"]["hide"]:
             if hidden not in section_ids:
                 accepted = ", ".join(f"`{name}`" for name in sorted(str(i) for i in section_ids))
-                _fail("changelog.hide", f"tem `{hidden}`, que não é id de `changelog.sections` ({accepted}).")
+                _fail("changelog.hide", self.t("config.changelog.hide", hidden=hidden, accepted=accepted))
         for kind, level in d["commits"]["levels"].items():
             if level not in LEVELS:
-                _fail(f"commits.levels.{kind}", f"deve ser um de {', '.join(LEVELS)}.")
+                _fail(f"commits.levels.{kind}", self.t("config.one_of", accepted=", ".join(LEVELS)))
         for key, value in d["pr"]["severity"].items():
             if value not in SEVERITIES:
-                _fail(f"pr.severity.{key}", f"deve ser um de {', '.join(SEVERITIES)}.")
+                _fail(f"pr.severity.{key}", self.t("config.one_of", accepted=", ".join(SEVERITIES)))
         try:
             re.compile(d["pr"]["title_pattern"])
         except re.error as exc:
-            _fail("pr.title_pattern", f"não é uma expressão regular válida: {exc}.")
+            _fail("pr.title_pattern", self.t("config.regex.invalid", error=exc))
         v = d["versioning"]
         if v["zero_major"] not in ZERO_MAJOR_POLICIES:
-            _fail("versioning.zero_major", f"deve ser um de {', '.join(ZERO_MAJOR_POLICIES)}.")
+            _fail("versioning.zero_major", self.t("config.one_of", accepted=", ".join(ZERO_MAJOR_POLICIES)))
         if Version.try_parse(str(v["initial_version"])) is None:
-            _fail("versioning.initial_version", "não é uma versão SemVer.")
+            _fail("versioning.initial_version", self.t("config.initial_version"))
         for index, entry in enumerate(v["files"]):
             key = f"versioning.files[{index}]"
             if not entry.get("path"):
-                _fail(f"{key}.path", "é obrigatório.")
+                _fail(f"{key}.path", self.t("config.required"))
             if bool(entry.get("search")) == bool(entry.get("regex")):
-                _fail(key, "precisa de exatamente um entre `search` e `regex`.")
+                _fail(key, self.t("config.files.search_or_regex"))
             if entry.get("regex") and "replace" not in entry:
-                _fail(f"{key}.replace", "é obrigatório com `regex`.")
+                _fail(f"{key}.replace", self.t("config.files.replace"))
             if entry.get("search") and not CURRENT_MARKER.search(entry["search"]):
-                _fail(
-                    f"{key}.search",
-                    "precisa de um marcador `{current…}` (por exemplo `version = \"{current}\"`): sem ele a troca "
-                    "não muda nada.",
-                )
+                _fail(f"{key}.search", self.t("config.files.marker"))
             if entry.get("regex"):
                 try:
                     re.compile(entry["regex"])
                 except re.error as exc:
-                    _fail(f"{key}.regex", f"não é uma expressão regular válida: {exc}.")
+                    _fail(f"{key}.regex", self.t("config.regex.invalid", error=exc))
             if not isinstance(entry.get("count", 1), int) or entry.get("count", 1) < 1:
-                _fail(f"{key}.count", "deve ser um inteiro maior que zero.")
+                _fail(f"{key}.count", self.t("config.files.count"))
         for index, entry in enumerate(v["public_surfaces"]):
             key = f"versioning.public_surfaces[{index}]"
             if not entry.get("globs"):
-                _fail(f"{key}.globs", "precisa de ao menos um padrão.")
+                _fail(f"{key}.globs", self.t("config.globs.empty"))
             for event in ("on_add", "on_modify", "on_remove"):
                 if entry.get(event, "review") not in SURFACE_ACTIONS:
-                    _fail(f"{key}.{event}", f"deve ser um de {', '.join(SURFACE_ACTIONS)}.")
+                    _fail(f"{key}.{event}", self.t("config.one_of", accepted=", ".join(SURFACE_ACTIONS)))
         for index, entry in enumerate(v["floors"]):
             key = f"versioning.floors[{index}]"
             if not entry.get("globs"):
-                _fail(f"{key}.globs", "precisa de ao menos um padrão.")
+                _fail(f"{key}.globs", self.t("config.globs.empty"))
             try:
                 if re.compile(entry.get("regex", "")).groups < 1:
-                    _fail(f"{key}.regex", "precisa de um grupo de captura com a versão.")
+                    _fail(f"{key}.regex", self.t("config.floors.group"))
             except re.error as exc:
-                _fail(f"{key}.regex", f"não é uma expressão regular válida: {exc}.")
+                _fail(f"{key}.regex", self.t("config.regex.invalid", error=exc))
         self._validate_channels()
         self._validate_version_labels()
         r = d["release"]
         if r["mode"] not in RELEASE_MODES:
-            _fail("release.mode", f"deve ser um de {', '.join(RELEASE_MODES)}.")
+            _fail("release.mode", self.t("config.one_of", accepted=", ".join(RELEASE_MODES)))
         if "{tag}" not in r["commit_message"]:
-            _fail("release.commit_message", "precisa conter `{tag}`.")
+            _fail("release.commit_message", self.t("config.commit_message.tag"))
         for item in r["mark"]:
             if item not in ("comment", "milestone"):
-                _fail("release.mark", "aceita `comment` e `milestone`.")
+                _fail("release.mark", self.t("config.release.mark"))
 
     def _validate_channels(self) -> None:
         """Canais de pré-release: lista fechada, em minúsculas, na ordem de precedência do SemVer.
@@ -524,7 +535,7 @@ def load(root: Path | None = None) -> Config:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except UnicodeDecodeError:
-        raise ConfigError(f"{path}: não está em UTF-8; salve o arquivo em UTF-8.") from None
+        raise ConfigError(i18n.t("config.file.not_utf8", path=path)) from None
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"{path}: {exc}") from exc
     cfg = Config(data, path=path, root=root)
