@@ -2,6 +2,8 @@
 
 Os títulos de seção (`##`) são os que a configuração do projeto exige (`issues.sections` e `pr.required_sections` em `.github/dev-workflow.toml`); os formulários em `.github/ISSUE_TEMPLATE/` usam os mesmos nomes, e o check do PR procura por eles. Se o projeto tiver seções próprias (segurança, conformidade), acrescente-as aqui do mesmo jeito. Troque o texto entre `<>`; mantenha toda seção, usando "Não se aplica — <motivo>" quando for o caso.
 
+**Projeto em inglês.** Com `language = "en"` ([configuração](configuration.md#language)), o `bootstrap.py` instala os modelos de `assets/locales/en/`: os mesmos cinco formulários, com os mesmos `id` de campo, o `config.yml` e o modelo de PR, com os títulos em inglês (Context, Goal, Scope, Technical approach, Acceptance criteria, Test plan, Documentation to update, Risks and dependencies, Definition of done; no bug, Observed behavior, Expected behavior e Steps to reproduce; no PR, Issues, Summary, Tests run, Documentation e Version). Os modelos abaixo valem com esses títulos no lugar dos em português, e "Not applicable — <reason>" no lugar de "Não se aplica — <motivo>". Um título padrão de um idioma também vale no outro: issues e PRs abertos antes de uma troca de idioma continuam passando no check.
+
 ## feature / enhancement / refactor / test / ci / chore
 
 ~~~markdown
