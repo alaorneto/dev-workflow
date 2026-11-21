@@ -182,7 +182,7 @@ cd <project>
 python3 ~/src/dev-workflow/scripts/bootstrap.py init
 ```
 
-`init` copies the skill to the project's `.claude/skills/dev-workflow/`, generates the configuration with the version files it recognizes, the workflows, the issue and PR templates, installs the `commit-msg` hook and creates the labels. Nothing that already exists is overwritten without `--force`.
+`init` copies the skill to the project's `.claude/skills/dev-workflow/` (or wherever `--skill-dir` says, e.g. `--skill-dir .agents/skills/dev-workflow`; the workflows and the hook point there), generates the configuration with the version files it recognizes, the workflows, the issue and PR templates, installs the `commit-msg` hook and creates the labels. Nothing that already exists is overwritten without `--force`. It also writes `.github/dev-workflow-manifest.json` — the skill version, where the skill lives and a hash of every generated file — which is how `update` and `uninstall` tell a generated file from a customized one.
 
 After that: review `.github/dev-workflow.toml`, commit and merge what `init` generated (workflows only take effect on the default branch), and create the baseline tag with `release.py baseline --push` — without it, the first release would consider the entire history. The full walkthrough, the repository owner's one-time steps (permissions, branch protection, secrets) and the snippet for the project's agent instructions (`AGENTS.md`, `CLAUDE.md`) are in [references/installation.md](references/installation.md).
 
@@ -196,7 +196,9 @@ python3 ~/src/dev-workflow/scripts/bootstrap.py update
 python3 .claude/skills/dev-workflow/scripts/bootstrap.py doctor
 ```
 
-`update` mirrors the copy in `.claude/skills/dev-workflow/` (removing what left the new version), regenerates the workflows and templates the project has not customized, and warns about the customized ones. The project's configuration is never replaced. Going back to an older version is refused without `--force`. Commit the result on an issue branch, like any other change.
+`update` replaces the copy at the path recorded in the manifest (removing what left the new version), regenerates the workflows and templates the project has not edited — recognized by their hash, even after a configuration change such as a new release label — removes the ones the new version no longer generates, renews the `commit-msg` hook, and warns about the customized ones. It is all or nothing: a failure midway leaves the previous copy and files intact. A project installed before the manifest existed falls back to comparing with the old template and gets a manifest on its first `update`. The project's configuration is never replaced. Going back to an older version is refused without `--force`, and so is running `update` from the installed copy. Commit the result on an issue branch, like any other change.
+
+To remove the workflow, `bootstrap.py uninstall` lists what would go and what stays; `uninstall --yes` removes only what was not customized (the skill copy, generated files, the manifest and the hook) and lists the rest.
 
 ## Configuration
 
@@ -222,7 +224,7 @@ Full reference: [references/configuration.md](references/configuration.md).
 
 | Command | What it does |
 |---|---|
-| `bootstrap.py init` / `update` / `doctor` / `install-hook` / `version` | Install, update and verify the workflow in a project |
+| `bootstrap.py init` / `update` / `uninstall` / `doctor` / `install-hook` / `version` | Install, update, remove and verify the workflow in a project |
 | `github_issues.py start <N>` | Creates the branch for an issue |
 | `github_issues.py sync-epic <E>` | Creates the native sub-issue and "blocked by" links of an epic |
 | `github_issues.py check-pr --pr <N>` | Runs the PR check locally |
