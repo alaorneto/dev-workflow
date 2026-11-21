@@ -561,7 +561,7 @@ def apply_analyses(changes: list[Change], analyses: list[dict[str, Any]]) -> Non
         for analysis in analyses:  # em ordem cronológica: a última que cita a mudança vence
             for entry in analysis["changes"]:
                 by_pr = change.number is not None and entry.get("pr") == change.number
-                by_sha = "commit" in entry and any(c.sha.startswith(entry["commit"]) for c in [*change.commits, change])
+                by_sha = "commit" in entry and any(sha.startswith(entry["commit"]) for sha in [*(c.sha for c in change.commits), change.sha])
                 if by_pr or (change.number is None and by_sha):
                     verdict = entry
         if verdict is None:

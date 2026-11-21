@@ -35,7 +35,20 @@ SKILL = Path(__file__).resolve().parents[2]
 ASSETS = SKILL / "assets"
 VENDOR_PATH = ".claude/skills/dev-workflow"
 # O que é do repositório do skill, não do skill: não vai para a cópia dentro de um projeto.
-COPY_IGNORE = ("__pycache__", "*.pyc", "*-workspace", ".git", ".github", ".pr-head")
+COPY_IGNORE = (
+    "__pycache__",
+    "*.pyc",
+    "*-workspace",
+    ".git",
+    ".github",
+    ".pr-head",
+    ".ruff_cache",
+    ".mypy_cache",
+    "ruff.toml",
+    "mypy.ini",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+)
 WORKFLOWS = ("pr-check.yml", "pr-merged.yml", "release.yml", "epic-checklist.yml", "semver-analysis.yml")
 OPTIONAL_WORKFLOWS = ("dev-workflow-selftest.yml",)
 

@@ -446,7 +446,9 @@ def release_commit_refusal(session: Session, collector: Collector, commit: Commi
         merge = MERGE_PR.match(carrier.subject)
         owner = (github.repository or "").split("/", 1)[0].lower()
         ours = merge is not None and merge.group("branch") == branch
-        if carrier.sha == commit.sha or (ours and (not owner or str(merge.group("owner")).lower() == owner)):
+        if carrier.sha == commit.sha or (
+            ours and merge is not None and (not owner or str(merge.group("owner")).lower() == owner)
+        ):
             return None
         return f"chegou pelo merge {carrier.sha[:7]}, que não é do PR de release (`{branch}` deste repositório)"
     number = collector.pr_number(carrier)

@@ -413,6 +413,11 @@ class BootstrapTest(unittest.TestCase):
             ".git/HEAD": "x",
             "scripts/__pycache__/a.cpython.pyc": "x",
             "x-workspace/out.txt": "x",
+            "ruff.toml": "x",
+            "mypy.ini": "x",
+            ".ruff_cache/x": "x",
+            "SECURITY.md": "x",
+            "CONTRIBUTING.md": "x",
         }
         for name, content in box_files.items():
             (source / name).parent.mkdir(parents=True, exist_ok=True)
