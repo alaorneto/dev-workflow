@@ -77,6 +77,34 @@ class CheckPullRequestTest(unittest.TestCase):
         )
         self.assertIn("não é major", _check(_pr(labels=("release", "semver:huge"), body=with_reason)).errors[0])
 
+    def test_a_channel_label_asks_for_a_prerelease_and_only_one_version_label_fits(self):
+        self.assertEqual(_check(_pr(labels=("release:beta",))).errors, [])
+        both = _check(_pr(labels=("release", "release:beta")))
+        self.assertIn("Mais de um label de versão (`release`, `release:beta`)", both.errors[0])
+        two = _check(_pr(labels=("release:alpha", "release:rc")))
+        self.assertIn("Mais de um label de versão (`release:alpha`, `release:rc`)", two.errors[0])
+
+        # a sobreposição vale com label de canal, com o mesmo motivo obrigatório
+        with_reason = PR_BODY.format(
+            issues="Closes #1", summary="x", version="Motivo da sobreposição: só muda o padrão"
+        )
+        self.assertEqual(_check(_pr(labels=("release:rc", "semver:patch"), body=with_reason)).errors, [])
+        self.assertIn("sem motivo", _check(_pr(labels=("release:rc", "semver:patch"))).errors[0])
+        alone = _check(_pr(labels=("semver:patch",), body=with_reason)).errors[0]
+        self.assertIn("ou com um label de canal (`release:alpha`, `release:beta`, `release:rc`)", alone)
+
+        # um sufixo que não é canal do projeto não pede versão: aviso, não erro
+        unknown = _check(_pr(labels=("release:nightly",)))
+        self.assertEqual(unknown.errors, [])
+        self.assertIn("O label `release:nightly` não é um canal de pré-release deste projeto", unknown.warnings[0])
+        self.assertIn("só vale em PR marcado", _check(_pr(labels=("release:nightly", "semver:patch"))).errors[0])
+
+        custom = Config({"labels": {"prerelease_prefix": "pre/"}, "versioning": {"prerelease": {"channels": ["rc"]}}})
+        self.assertEqual(_check(_pr(labels=("pre/rc",)), cfg=custom).errors, [])
+        self.assertIn("Mais de um label de versão", _check(_pr(labels=("pre/rc", "release")), cfg=custom).errors[0])
+        # Com outro prefixo, `release:beta` é um label qualquer.
+        self.assertEqual(_check(_pr(labels=("release:beta",)), cfg=custom).warnings, [])
+
     def test_the_issue_link_is_still_required(self):
         body = PR_BODY.format(issues="Sem issue", summary="x", version="ok")
         self.assertIn("não referencia issue", _check(_pr(body=body)).errors[0])
@@ -175,6 +203,13 @@ class MergedPullRequestTest(SandboxCase):
         self.assertNotIn("10", state["comments"])
         self.assertIn("fica acumulada", state["comments"]["1"][0]["body"])
         self.assertIn("Nada a versionar: 1 mudança(s)", self.assertRan(box.release()))
+
+    def test_a_merge_with_a_channel_label_says_a_prerelease_is_coming(self):
+        box = self._merge(labels=("release:beta",))
+        self.assertRan(box.run("github_issues.py", "pr-merged", "--pr", "10"))
+        body = box.state()["comments"]["1"][0]["body"]
+        self.assertIn("**Versão:** o PR pede uma pré-release do canal `beta`", body)
+        self.assertNotIn("fica acumulada", body)
 
     def test_check_pr_reads_the_pr_from_github(self):
         box = self._merge(labels=("semver:patch",))
@@ -317,6 +352,29 @@ class BootstrapTest(unittest.TestCase):
 
         forced = box.run("bootstrap.py", "update", "--force")
         self.assertIn(".github/workflows/release.yml atualizado pelo modelo novo", forced.stdout)
+
+    def test_the_generated_workflows_know_the_channel_labels(self):
+        box, _ = self._installed()
+        check = box.read(".github/workflows/pr-check.yml")
+        self.assertIn("- name: Pedido de versão do PR pode ser publicado", check)
+        self.assertIn('--head-ref refs/dev-workflow/pr-head --check', check)
+        # A base pode ainda não ter a opção: o passo não reprova o PR que a traz.
+        self.assertIn('preview --help | grep -q -- "--check"', check)
+        release = box.read(".github/workflows/release.yml")
+        self.assertIn("prerelease: ${{ steps.run.outputs.prerelease }}", release)
+        self.assertIn("channel: ${{ steps.run.outputs.channel }}", release)
+        analysis = box.read(".github/workflows/semver-analysis.yml")
+        self.assertIn("labels.*.name, 'release') ||", analysis)
+        self.assertIn("join(github.event.pull_request.labels.*.name, ',')), ',release:')", analysis)
+
+        # Quem troca os labels na configuração regenera a condição com `update --force`.
+        labels = '\n[labels]\nrelease = "publicar"\nprerelease_prefix = "canal/"\n'
+        box.write({".github/dev-workflow.toml": box.read(".github/dev-workflow.toml") + labels})
+        forced = box.run("bootstrap.py", "update", "--force")
+        self.assertEqual(forced.returncode, 0, forced.stdout + forced.stderr)
+        analysis = box.read(".github/workflows/semver-analysis.yml")
+        self.assertIn("labels.*.name, 'publicar') ||", analysis)
+        self.assertIn("',canal/')", analysis)
 
     def test_update_refuses_what_is_not_an_upgrade_of_this_skill(self):
         box, vendored = self._installed()

@@ -139,7 +139,8 @@ Rules around it:
 - **Idempotent by state, not by memory.** Every run derives everything from tags, the release commit and GitHub. There is no state file; running the workflow again completes whatever failed midway.
 - **Two write modes.** `direct` (default) commits to the branch and publishes in the same run. `pull-request` opens or updates a `release/next` PR and publishes when it is merged, for branches that require PRs.
 - **Deterministic signals first.** A release never depends on an external service being available.
-- Publishing the accumulated changes without a `release` PR, pre-releases (`X.Y.Z-rc.1`), hotfixes on a `release/*` maintenance line and undoing a wrong release are all supported; see [references/versioning.md](references/versioning.md).
+- **Pre-releases are requested the same way, with a channel label.** `release:alpha`, `release:beta` or `release:rc` on a PR publishes `X.Y.Z-<channel>.N` with everything accumulated, as a GitHub pre-release, without touching the changelog or commenting on issues. A request counts while its PR has not been in any version yet; the most mature request wins; a channel never goes back and the target of a cycle never goes down; `release` closes the cycle with the final version, which covers everything since the last final.
+- Publishing the accumulated changes without a `release` PR, promoting a pre-release without a new PR, hotfixes on a `release/*` maintenance line and undoing a wrong release are all supported; see [references/versioning.md](references/versioning.md).
 
 ### Closing with evidence
 

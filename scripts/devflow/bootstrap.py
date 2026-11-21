@@ -181,6 +181,7 @@ def template_values(root: Path, skill_dir: str, branch: str, cfg: Config | None,
         "SKILL_PATH": "" if skill_dir == "." else f"{skill_dir}/",
         "DEFAULT_BRANCH": branch,
         "RELEASE_LABEL": cfg.label("release") if cfg else "release",
+        "PRERELEASE_PREFIX": cfg.label("prerelease_prefix") if cfg else "release:",
         "REPOSITORY_URL": f"https://github.com/{repository}",
     }
 
@@ -464,7 +465,7 @@ def doctor(_args: argparse.Namespace) -> int:
 
     repo = Repo(cfg, git)
     if cfg.versioning_enabled:
-        latest = repo.latest("HEAD", final_only=False) if git.ok("rev-parse", "HEAD") else None
+        latest = repo.current("HEAD") if git.ok("rev-parse", "HEAD") else None
         current = latest[1] if latest else Version.parse(str(cfg.versioning["initial_version"]))
         problems = check_version_files(cfg, current)
         for problem in problems:

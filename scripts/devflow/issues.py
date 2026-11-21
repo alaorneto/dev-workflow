@@ -141,8 +141,9 @@ def is_exempt(pr: dict[str, Any], cfg: Config) -> str | None:
 
 
 def is_release(labels: set[str], cfg: Config) -> bool:
-    """O PR publica versão só quando tem o label de release; sem ele, fica acumulado."""
-    return cfg.label("release") in labels
+    """O PR pede versão quando tem um label de versão: o de release (final) ou um de canal
+    (pré-release). Sem nenhum, fica acumulado."""
+    return bool(cfg.version_labels(labels))
 
 
 def overrides_of(labels: set[str], cfg: Config) -> list[str]:
@@ -184,6 +185,13 @@ def check_pull_request(
 
     if cfg.versioning_enabled:
         release = cfg.label("release")
+        channel_labels = ", ".join(f"`{cfg.channel_label(channel)}`" for channel in cfg.prerelease_channels)
+        asked = cfg.version_labels(labels)
+        if len(asked) > 1:
+            shown = ", ".join(f"`{label}`" for label in asked)
+            findings.errors.append(cfg.t("check.version_labels.many", labels=shown, release=release))
+        for label in cfg.unknown_channel_labels(labels):
+            findings.warnings.append(cfg.t("check.version_labels.unknown", label=label, accepted=channel_labels or "—"))
         overrides = overrides_of(labels, cfg)
         if len(overrides) > 1:
             findings.errors.append(f"Mais de um label de sobreposição ({', '.join(overrides)}); deixe só um.")
@@ -191,8 +199,9 @@ def check_pull_request(
             if overrides[0] not in ("major", "minor", "patch"):
                 findings.errors.append(f"`{cfg.override_label(overrides[0])}` não é major, minor nem patch.")
             if not is_release(labels, cfg):
+                also = f" ou com um label de canal ({channel_labels})" if channel_labels else ""
                 findings.errors.append(
-                    f"`{cfg.override_label(overrides[0])}` só vale em PR marcado com `{release}`: a sobreposição "
+                    f"`{cfg.override_label(overrides[0])}` só vale em PR marcado com `{release}`{also}: a sobreposição "
                     "decide o número da versão que este PR publica."
                 )
             if not override_reason(body, cfg):
@@ -346,7 +355,10 @@ def evidence_comment(
             lines.append(f"**Critérios de aceite:** os {len(boxes)} marcados.")
         if cfg.versioning_enabled:
             lines.append("")
-            if is_release(label_names(pr), cfg):
+            channels = cfg.requested_channels(label_names(pr))
+            if channels and cfg.label("release") not in label_names(pr):
+                lines.append(cfg.t("evidence.version.prerelease", channel=channels[-1]))
+            elif is_release(label_names(pr), cfg):
                 lines.append(
                     "**Versão:** o PR está marcado para versionar; a automação de release comenta aqui quando a versão sair."
                 )

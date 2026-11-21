@@ -248,6 +248,48 @@ class ZeroMajorTest(SandboxCase):
         self.assertEqual(box.tags(), ["v0.5.0", "v1.0.0"])
 
 
+class CycleTargetTest(SandboxCase):
+    """O alvo de um ciclo de pré-releases não desce; um repositório que já regrediu não é forçado."""
+
+    tag = "v0.9.0"
+    files = {
+        "pyproject.toml": '[project]\nname = "demo"\nversion = "0.9.0"\n',
+        "package.json": '{\n  "name": "demo",\n  "version": "0.9.0"\n}\n',
+    }
+
+    def _stable_candidate(self):
+        box = self.box
+        box.merge_pr(10, "fix: handle the empty list", FIX)
+        self.assertRan(box.release("--level", "major", "--reason", "API declarada estável", "--prerelease", "rc"))
+        self.assertEqual(box.tags(), ["v0.9.0", "v1.0.0-rc.1"])
+        return box
+
+    def test_the_final_after_an_overridden_prerelease_keeps_the_target_of_the_cycle(self):
+        box = self._stable_candidate()
+        box.merge_pr(11, "fix: round half up", [("fix: round half up", None)], labels=["release"])
+        out = self.assertRan(box.release())
+        self.assertEqual(box.tags(), ["v0.9.0", "v1.0.0", "v1.0.0-rc.1"])
+        self.assertIn("O ciclo em andamento já publicou v1.0.0-rc.1", out)
+        self.assertIn("**v0.9.0 → v1.0.0** — nível **major**.", out)
+        self.assertIn('"version": "1.0.0"', box.read("package.json"))
+        self.assertIn("coerentes com a versão 1.0.0", self.assertRan(box.run("release.py", "check")))
+
+    def test_a_repository_that_already_regressed_is_not_forced_back_up(self):
+        box = self._stable_candidate()
+        # O que acontecia antes da correção: uma final abaixo do ciclo, com os arquivos nela.
+        box.write({name: text.replace("0.9.0", "0.9.1") for name, text in self.files.items()})
+        box.git("commit", "-q", "-am", "chore(release): v0.9.1")
+        box.git("tag", "-a", "v0.9.1", "-m", "v0.9.1")
+        box.git("push", "-q", "--tags", "origin", "main")
+        box.update_state(lambda state: state["releases"].__setitem__("v0.9.1", {"tag_name": "v0.9.1"}))
+
+        self.assertIn("coerentes com a versão 0.9.1", self.assertRan(box.run("release.py", "check")))
+        box.merge_pr(11, "fix: round half up", [("fix: round half up", None)], labels=["release"])
+        self.assertRan(box.release())
+        self.assertEqual(box.tags(), ["v0.9.0", "v0.9.1", "v0.9.2", "v1.0.0-rc.1"])
+        self.assertIn('"version": "0.9.2"', box.read("package.json"))
+
+
 class AgentAnalysisTest(SandboxCase):
     ANALYSIS = (
         "<!-- dev-workflow:analysis\n"
@@ -540,16 +582,43 @@ class PullRequestModeTest(SandboxCase):
         self.assertEqual(len(_bodies(state, 10)), 1)
         self.assertIn("Nada a versionar", self.assertRan(box.release()))
 
-    def _merge_release_pr(self):
+    def _merge_release_pr(self, number=1001):
         box = self.box
         box.git("fetch", "-q", "origin", "release/next")
-        box.git("merge", "-q", "--no-ff", "FETCH_HEAD", "-m", "Merge pull request #1001 from acme/release/next")
+        box.git("merge", "-q", "--no-ff", "FETCH_HEAD", "-m", f"Merge pull request #{number} from acme/release/next")
         box.git("push", "-q", "origin", "main")
-        box.update_state(lambda state: state["pulls"]["1001"].update(state="closed", merged=True, merged_at="x"))
+        box.update_state(lambda state: state["pulls"][str(number)].update(state="closed", merged=True, merged_at="x"))
 
     def _open_release_pr(self):
         (pull,) = [pull for pull in self.box.state()["pulls"].values() if pull["state"] == "open"]
         return pull
+
+    def test_a_prepared_prerelease_is_published_and_so_is_the_next_one(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT)
+        out = self.assertRan(box.release("--prerelease", "rc"))
+        self.assertIn("PR de release #1001 aberto para v1.3.0-rc.1.", out)
+        self._merge_release_pr()
+        out = self.assertRan(box.release())
+        self.assertIn("Commit de release de v1.3.0-rc.1 sem tag; publicando.", out)
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0-rc.1"])
+        self.assertTrue(box.state()["releases"]["v1.3.0-rc.1"]["prerelease"])
+
+        box.merge_pr(11, "fix: handle the empty list", FIX)
+        refused = box.release("--prerelease", "beta")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("O canal `beta` é anterior a `rc`", refused.stdout)
+        self.assertEqual([pull for pull in box.state()["pulls"].values() if pull["state"] == "open"], [])
+
+        out = self.assertRan(box.release("--prerelease", "rc"))
+        number = self._open_release_pr()["number"]
+        self.assertIn(f"PR de release #{number} aberto para v1.3.0-rc.2.", out)
+        self._merge_release_pr(number)
+        out = self.assertRan(box.release())
+        self.assertIn("Commit de release de v1.3.0-rc.2 sem tag; publicando.", out)
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0-rc.1", "v1.3.0-rc.2"])
+        self.assertIn('version = "1.3.0rc2"', box.read("pyproject.toml"))
+        self.assertIn("Nada a versionar", self.assertRan(box.release()))
 
     def test_the_release_pr_branch_itself_never_publishes(self):
         box = self._prepare()
@@ -688,6 +757,83 @@ class PrereleaseAndMaintenanceTest(SandboxCase):
         self.assertIn("compare/v1.2.0...v1.3.0", changelog)
         self.assertIn("Exportar em CSV", changelog)
         self.assertEqual(len(_bodies(box.state(), 10)), 1)
+
+    def test_a_channel_outside_the_project_list_is_refused(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT)
+        refused = box.release("--force", "--prerelease", "nightly")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("`nightly` fora da lista do projeto", refused.stderr)
+        self.assertIn("alpha, beta, rc", refused.stderr)
+        self.assertEqual((box.tags(), box.state()["releases"]), (["v1.2.0"], {}))
+
+        # o canal da lista sai na forma de cada arquivo: SemVer no package.json, PEP 440 no pyproject.toml
+        self.assertRan(box.release("--force", "--prerelease", "BETA"))
+        self.assertEqual(box.tags(), ["v1.2.0", "v1.3.0-beta.1"])
+        self.assertIn('version = "1.3.0b1"', box.read("pyproject.toml"))
+        self.assertIn('"version": "1.3.0-beta.1"', box.read("package.json"))
+
+    def test_asking_for_a_channel_publishes_without_force(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT)
+        self.assertRan(box.release("--prerelease", "rc"))
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0-rc.1"])
+        self.assertTrue(box.state()["releases"]["v1.3.0-rc.1"]["prerelease"])
+
+    def test_a_manual_channel_earlier_than_the_one_of_the_cycle_is_refused(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT)
+        self.assertRan(box.release("--prerelease", "beta"))
+        box.merge_pr(11, "fix: handle the empty list", FIX)
+        self.assertRan(box.release("--prerelease", "beta"))
+        tags = ["v1.2.0", "v1.3.0-beta.1", "v1.3.0-beta.2"]
+        self.assertEqual(box.tags(), tags)
+        head = box.git("rev-parse", "HEAD")
+
+        refused = box.release("--prerelease", "alpha")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("O canal `alpha` é anterior a `beta`", refused.stdout)
+        self.assertIn("que o ciclo de 1.3.0 já publicou (v1.3.0-beta.2)", refused.stdout)
+        self.assertEqual((box.tags(), box.remote_tags(), box.git("rev-parse", "HEAD")), (tags, tags, head))
+        self.assertEqual(box.git("status", "--porcelain"), "")
+        self.assertEqual(sorted(box.state()["releases"]), ["v1.3.0-beta.1", "v1.3.0-beta.2"])
+
+        # promover a um canal mais maduro continua valendo, e a numeração recomeça
+        self.assertRan(box.release("--prerelease", "rc"))
+        self.assertEqual(box.tags(), [*tags, "v1.3.0-rc.1"])
+        self.assertIn('version = "1.3.0rc1"', box.read("pyproject.toml"))
+
+    def test_an_override_below_the_target_of_the_cycle_is_a_problem_not_a_silent_raise(self):
+        box = self.box
+        box.merge_pr(10, "feat!: drop the legacy client", [("feat!: drop the legacy client", None)])
+        self.assertRan(box.release("--prerelease", "beta"))
+        tags = ["v1.2.0", "v2.0.0-beta.1"]
+        self.assertEqual(box.tags(), tags)
+
+        body = PR_BODY.format(issues="Closes #", summary="x", version="Motivo da sobreposição: é só uma correção.")
+        box.merge_pr(11, "fix: handle the empty list", FIX, labels=["release", "semver:patch"], body=body)
+        refused = box.release()
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("A sobreposição pede 1.2.1, abaixo de 2.0.0", refused.stdout)
+        self.assertIn("(v2.0.0-beta.1)", refused.stdout)
+        self.assertEqual((box.tags(), box.remote_tags()), (tags, tags))
+
+        box.update_state(lambda state: state["pulls"]["11"].update(labels=[{"name": "release"}]))
+        self.assertRan(box.release())
+        self.assertEqual(box.tags(), ["v1.2.0", "v2.0.0", "v2.0.0-beta.1"])
+
+    def test_a_maintenance_line_cannot_take_a_number_the_main_cycle_is_using(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT)
+        self.assertRan(box.release("--prerelease", "beta"))  # a main está no ciclo de 1.3.0
+        box.git("switch", "-q", "-c", "release/1.2", "v1.2.0")
+        box.git("push", "-q", "origin", "release/1.2")
+        box.merge_pr(11, "feat: backport the export", FEAT, labels=["release"], base="release/1.2")
+        refused = box.release()
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("A versão 1.3.0 já tem tag em outra linha (v1.3.0-beta.1)", refused.stdout)
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0-beta.1"])
+        self.assertIn('version = "1.2.0"', box.read("pyproject.toml"))
 
     def test_a_maintenance_branch_releases_a_patch_that_is_not_the_latest(self):
         box = self.box

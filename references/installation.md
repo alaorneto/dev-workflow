@@ -20,7 +20,7 @@ O que ele faz:
 | Gera os workflows a partir dos modelos | `.github/workflows/pr-check.yml`, `pr-merged.yml`, `release.yml`, `epic-checklist.yml`, `semver-analysis.yml` |
 | Copia os modelos | `.github/ISSUE_TEMPLATE/*.yml`, `.github/pull_request_template.md` |
 | Instala o hook `commit-msg` | `.git/hooks/commit-msg`; se o projeto usa pre-commit, mostra o trecho a acrescentar |
-| Cria os labels | Tipos, `epic`, `release`, `breaking-change`, `semver:major|minor|patch` |
+| Cria os labels | Tipos, `epic`, `release`, `release:alpha|beta|rc` (um por canal de pré-release), `breaking-change`, `semver:major|minor|patch` |
 
 Opções: `--default-branch`, `--initial-version`, `--no-labels`, `--selftest` (instala também o workflow que roda a suíte do skill), `--dry-run`, `--force` (troca arquivos que já existem; sem ele, nada existente é sobrescrito).
 
@@ -53,7 +53,7 @@ Cada pessoa instala o hook no próprio checkout, uma vez: `python3 S/bootstrap.p
 4. **Segredos opcionais.**
    - `RELEASE_TOKEN`: escrever em branch protegida e fazer a tag disparar outros workflows.
    - `ANTHROPIC_API_KEY` ou `CLAUDE_CODE_OAUTH_TOKEN`: liga a análise de versão por agente no CI. Sem eles o workflow pula os passos.
-5. **Publicação de artefatos (opcional).** Aponte `release.dispatch_workflow` para um workflow com `workflow_dispatch` e os inputs `version` e `tag`.
+5. **Publicação de artefatos (opcional).** Aponte `release.dispatch_workflow` para um workflow com `workflow_dispatch` e os inputs `version` e `tag`. Ele dispara também nas pré-releases; para tratá-las de outro jeito (dist-tag do npm, por exemplo), veja [configuração](configuration.md#publicar-artefatos-final-ou-pré-release).
 
 ## 5. Hooks do Claude Code (opcional)
 
