@@ -235,7 +235,7 @@ class RequestRecoveryTest(SandboxCase):
         args = ("release.py", "preview", "--pr", str(number), "--base-ref", "main", "--head-ref", branch, "--check")
         return self.box.run(*args)
 
-    def test_the_request_check_fails_only_for_what_the_pr_itself_asks(self):
+    def test_the_request_check_passes_what_can_be_published_and_waits_for_the_analysis(self):
         box = self.box
         plain = box.open_pr(41, "fix: handle the empty list", FIX)
         out = self.assertRan(self._check(41, plain))
@@ -246,17 +246,60 @@ class RequestRecoveryTest(SandboxCase):
         self.assertIn("PR #42: o pedido `release:beta` pode ser publicado (v1.3.0-beta.1).", out)
         self.assertEqual(box.state()["comments"], {})  # o check não comenta
 
-        # o problema vem do PR: ele toca a superfície pública e pede versão sem análise registrada
+        # O PR toca a superfície pública e pede versão antes de a análise existir. O check avisa e não
+        # reprova: a análise chega num comentário, que não o dispara de novo, e ele ficaria vermelho.
         surface = box.open_pr(43, "fix: require the page size", API, labels=["release"])
-        refused = self._check(43, surface)
-        self.assertEqual(refused.returncode, 1)
-        self.assertIn("sem análise registrada: #43", refused.stdout)
-        self.assertIn("PR #43: o pedido `release` não pode ser publicado", refused.stdout)
+        out = self.assertRan(self._check(43, surface))
+        self.assertIn("aviso: Mudanças em superfícies públicas sem análise registrada: #43", out)
+        self.assertIn("PR #43: o pedido `release` aguarda a análise de versão", out)
+        self.assertNotIn("pode ser publicado", out)
         box.comment(43, ANALYSIS % 43)
         self.assertIn("pode ser publicado (v1.2.1)", self.assertRan(self._check(43, surface)))
-        # sem label de versão o mesmo PR não pede nada, e o check não tem o que reprovar
+        # sem label de versão o mesmo PR não pede nada, e o check não tem o que conferir
         box.update_state(lambda state: state["pulls"]["43"].update(labels=[]))
         self.assertIn("sem label de versão", self.assertRan(self._check(43, surface)))
+
+    def test_the_release_still_stops_for_the_analysis_the_check_only_warned_about(self):
+        box = self.box
+        box.merge_pr(43, "fix: require the page size", API, labels=["release"])
+        refused = box.release()
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("sem análise registrada: #43", refused.stdout)
+        self.assertEqual(box.remote_tags(), ["v1.2.0"])
+
+    def test_a_pr_opened_before_another_release_is_checked_against_the_tip_of_the_base(self):
+        box = self.box
+        opened_at = box.git("rev-parse", "main")
+        branch = box.open_pr(42, "fix: round half up", [("fix: round half up", None)], labels=["release"])
+        box.merge_pr(31, "fix: handle the empty list", FIX, labels=["release"])
+        self.assertRan(box.release())
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.2.1"])
+
+        # É o que o workflow passa: a ponta atual da branch de destino, onde v1.2.1 já saiu.
+        out = self.assertRan(self._check(42, branch))
+        self.assertIn("PR #42: o pedido `release` pode ser publicado (v1.2.2).", out)
+        # O SHA de base do evento fica no commit em que o PR foi aberto: dali, o número já está tomado,
+        # e o check reprovaria um PR que não tem nada de errado.
+        args = ("release.py", "preview", "--pr", "42", "--base-ref", opened_at, "--head-ref", branch, "--check")
+        stale = box.run(*args)
+        self.assertEqual(stale.returncode, 1)
+        self.assertIn("A tag v1.2.1 já existe", stale.stdout)
+
+    def test_an_inherited_problem_stays_inherited_when_the_pr_changes_the_target(self):
+        floors = '\n[[versioning.floors]]\nglobs = ["api/**"]\nregex = \'since="(\\d+\\.\\d+\\.\\d+)"\'\n'
+        files = {**BASE_FILES, "api/client.py": 'def fetch():\n    return 1  # since="3.0.0"\n'}
+        box = Sandbox(BASE_CONFIG + floors, files, tag="v1.2.0")
+        self.addCleanup(box.close)
+        box.merge_pr(31, "fix: handle the empty list", FIX)  # o piso 3.0.0 já impede a release sem o PR 42
+        status = self.assertRan(box.run("release.py", "status"))
+        self.assertIn("declara o piso 3.0.0, maior que a versão 1.2.1", status)
+
+        # O PR leva o alvo de 1.2.1 a 1.3.0, e o texto do problema muda com ele; o problema é o mesmo.
+        branch = box.open_pr(42, "feat: add the export command", FEAT, labels=["release"])
+        args = ("release.py", "preview", "--pr", "42", "--base-ref", "main", "--head-ref", branch, "--check")
+        out = self.assertRan(box.run(*args))
+        self.assertIn("aviso: `api/client.py` declara o piso 3.0.0, maior que a versão 1.3.0", out)
+        self.assertIn("PR #42: o pedido `release` esbarra em 1 problema(s) que já existem sem este PR", out)
 
     def test_a_problem_that_exists_without_the_pr_does_not_fail_its_check(self):
         box = self.box
@@ -364,16 +407,24 @@ class WorkflowOutputsTest(SandboxCase):
         box = Sandbox(BASE_CONFIG, tag="v1.2.0", mode="pull-request")
         self.addCleanup(box.close)
         box.merge_pr(31, "feat: add the export command", FEAT, labels=["release:rc"])
-        self.assertEqual(
-            self._outputs(box),
-            {
-                "released": "false",
-                "version": "1.3.0-rc.1",
-                "tag": "v1.3.0-rc.1",
-                "prerelease": "true",
-                "channel": "rc",
-            },
-        )
+        announced = {"version": "1.3.0-rc.1", "tag": "v1.3.0-rc.1", "prerelease": "true", "channel": "rc"}
+        self.assertEqual(self._outputs(box), {"released": "false", **announced})
+
+        # Mesclado o PR de release, a execução publica a tag e ainda confere se sobrou algo a versionar:
+        # essa segunda rodada não apaga o `released=true`, que é o que dispara os jobs de publicação.
+        (pull,) = [pull for pull in box.state()["pulls"].values() if pull["state"] == "open"]
+        number = str(pull["number"])
+        box.merge_pr(32, "fix: handle the empty list", FIX, labels=["release:rc"])  # entrou antes do merge
+        box.git("fetch", "-q", "origin", "release/next")
+        subject = f"Merge pull request #{number} from acme/release/next"
+        box.git("merge", "-q", "--no-ff", "-X", "theirs", "FETCH_HEAD", "-m", subject)
+        box.git("push", "-q", "origin", "main")
+        box.update_state(lambda state: state["pulls"][number].update(state="closed", merged=True, merged_at="x"))
+        self.assertEqual(self._outputs(box), {"released": "true", **announced})
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0-rc.1"])
+        # ...nem o PR de release seguinte, aberto na mesma execução para o pedido do PR 32.
+        (pull,) = [pull for pull in box.state()["pulls"].values() if pull["state"] == "open"]
+        self.assertEqual(pull["title"], "chore(release): v1.3.0-rc.2")
 
 
 WHY = "### Por que este número"

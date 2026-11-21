@@ -399,6 +399,57 @@ class RecoveryTest(SandboxCase):
         self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.2.1"])
         self.assertIn("v1.2.1", box.state()["releases"])
 
+    def test_a_manual_prerelease_that_resumes_a_failed_one_ends_without_error(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT)
+        self.assertRan(box.release("--prerelease", "beta"))
+        box.merge_pr(11, "fix: handle the empty list", FIX)
+        self.assertRan(box.release("--prerelease", "beta"))
+        tags = ["v1.2.0", "v1.3.0-beta.1", "v1.3.0-beta.2"]
+        self.assertEqual(box.remote_tags(), tags)
+        # A execução caiu entre o push do commit de release e a tag: quem opera roda a mesma coisa de novo.
+        box.git("tag", "-d", "v1.3.0-beta.2")
+        box.git("push", "-q", "origin", ":refs/tags/v1.3.0-beta.2")
+        box.update_state(lambda state: state["releases"].pop("v1.3.0-beta.2"))
+
+        out = self.assertRan(box.release("--prerelease", "beta"))
+        self.assertIn("Commit de release de v1.3.0-beta.2 sem tag; publicando.", out)
+        self.assertIn("O pedido desta execução manual foi atendido por v1.3.0-beta.2", out)
+        self.assertNotIn("Nada novo desde", out)
+        self.assertEqual(box.remote_tags(), tags)
+        self.assertIn("v1.3.0-beta.2", box.state()["releases"])
+
+        # Sem nada a retomar, repetir o canal continua sendo um problema; promover, não.
+        repeated = box.release("--prerelease", "beta")
+        self.assertEqual(repeated.returncode, 1)
+        self.assertIn("Nada novo desde v1.3.0-beta.2", repeated.stdout)
+        self.assertEqual(box.remote_tags(), tags)
+
+    def test_a_manual_run_after_a_tag_without_release_finishes_it_and_then_answers_what_it_asks(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT)
+        box.update_state(lambda state: state.__setitem__("fail_release_once", True))
+        failed = box.release("--prerelease", "beta")
+        self.assertEqual(failed.returncode, 1)
+        self.assertEqual((box.remote_tags(), box.state()["releases"]), (["v1.2.0", "v1.3.0-beta.1"], {}))
+
+        # Pedir outro canal na retomada conclui a versão que parou e segue para a pedida.
+        out = self.assertRan(box.release("--prerelease", "rc"))
+        self.assertIn("A tag v1.3.0-beta.1 não tem GitHub Release; concluindo a publicação.", out)
+        self.assertNotIn("foi atendido por", out)
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0-beta.1", "v1.3.0-rc.1"])
+        self.assertEqual(sorted(box.state()["releases"]), ["v1.3.0-beta.1", "v1.3.0-rc.1"])
+
+        # Repetir o mesmo pedido depois da falha termina sem erro; vale também para a versão final.
+        box.update_state(lambda state: state.__setitem__("fail_release_once", True))
+        self.assertEqual(box.release("--force").returncode, 1)
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.3.0", "v1.3.0-beta.1", "v1.3.0-rc.1"])
+        self.assertNotIn("v1.3.0", box.state()["releases"])
+        out = self.assertRan(box.release("--force"))
+        self.assertIn("A tag v1.3.0 não tem GitHub Release; concluindo a publicação.", out)
+        self.assertIn("O pedido desta execução manual foi atendido por v1.3.0,", out)
+        self.assertIn("v1.3.0", box.state()["releases"])
+
     def test_a_wrong_release_is_undone_and_redone_with_another_level(self):
         box = self._released()
         self.assertRan(box.release())
@@ -851,6 +902,71 @@ class PrereleaseAndMaintenanceTest(SandboxCase):
         refused = box.release()
         self.assertEqual(refused.returncode, 1)
         self.assertIn("A tag v1.3.0 já existe", refused.stdout)
+
+    def _merge_forward(self, line="release/1.2"):
+        """Leva a linha de manutenção de volta à main, ficando com os arquivos de versão da main."""
+        box = self.box
+        box.git("switch", "-q", "main")
+        box.git("merge", "-q", "--no-ff", "-X", "ours", line, "-m", f"Merge branch '{line}'")
+        box.git("push", "-q", "origin", "main")
+
+    def test_a_maintenance_line_merged_forward_does_not_bring_its_cycle_along(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT, labels=["release"])
+        self.assertRan(box.release())
+        box.git("switch", "-q", "-c", "release/1.2", "v1.2.0")
+        box.git("push", "-q", "origin", "release/1.2")
+        box.merge_pr(11, "fix: handle the empty list", FIX, labels=["release:rc"], base="release/1.2")
+        self.assertRan(box.release())
+
+        def main_stays_at_its_own_version():
+            self.assertIn('version = "1.3.0"', box.read("pyproject.toml"))
+            out = self.assertRan(box.run("release.py", "check"))
+            self.assertIn("coerentes com a versão 1.3.0 (tag v1.3.0)", out)
+            out = self.assertRan(box.run("release.py", "status"))
+            self.assertIn("**v1.3.0 → v1.3.1**", out)
+            self.assertNotIn("Ciclo de pré-releases em andamento", out)
+
+        # Com o ciclo da linha ainda aberto: v1.2.1-rc.1 fica alcançável da main, que já publicou v1.3.0.
+        self._merge_forward()
+        main_stays_at_its_own_version()
+
+        # E depois de a linha publicar a final dela, que encerra aquele ciclo.
+        box.git("switch", "-q", "release/1.2")
+        box.merge_pr(12, "fix: round half up", [("fix: round half up", None)], labels=["release"], base="release/1.2")
+        self.assertRan(box.release())
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.2.1", "v1.2.1-rc.1", "v1.3.0"])
+        self._merge_forward()
+        main_stays_at_its_own_version()
+
+        box.merge_pr(13, "fix: keep the order", [("fix: keep the order", None)], labels=["release"])
+        self.assertRan(box.release())
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.2.1", "v1.2.1-rc.1", "v1.3.0", "v1.3.1"])
+        self.assertEqual(box.state()["releases"]["v1.3.1"]["make_latest"], "true")
+
+    def test_a_hotfix_merged_forward_during_a_cycle_leaves_the_cycle_of_the_main_line_open(self):
+        box = self.box
+        box.merge_pr(10, "feat: add the export command", FEAT, labels=["release:beta"])
+        self.assertRan(box.release())  # a main está no ciclo de 1.3.0
+        box.git("switch", "-q", "-c", "release/1.2", "v1.2.0")
+        box.git("push", "-q", "origin", "release/1.2")
+        box.merge_pr(11, "fix: handle the empty list", FIX, labels=["release"], base="release/1.2")
+        self.assertRan(box.release())
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.2.1", "v1.3.0-beta.1"])
+
+        # v1.2.1 passa a ser a última final alcançável da main; o ciclo de 1.3.0 continua sendo o dela.
+        self._merge_forward()
+        self.assertIn("(tag v1.3.0-beta.1)", self.assertRan(box.run("release.py", "check")))
+        out = self.assertRan(box.run("release.py", "status"))
+        self.assertIn("Ciclo de pré-releases em andamento: v1.3.0-beta.1. Versão corrente: v1.3.0-beta.1.", out)
+
+        box.merge_pr(12, "fix: round half up", [("fix: round half up", None)], labels=["release:beta"])
+        self.assertRan(box.release())
+        self.assertEqual(box.remote_tags(), ["v1.2.0", "v1.2.1", "v1.3.0-beta.1", "v1.3.0-beta.2"])
+        box.merge_pr(13, "docs: explain the export", [("docs: explain the export", None)], labels=["release"])
+        self.assertRan(box.release())
+        self.assertIn("v1.3.0", box.remote_tags())
+        self.assertIn('version = "1.3.0"', box.read("pyproject.toml"))
 
     def test_branches_outside_the_release_list_do_nothing(self):
         box = self.box

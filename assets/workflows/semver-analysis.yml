@@ -45,11 +45,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: >
-          python3 __SKILL_DIR__/scripts/release.py plan --format json
-          --pr "$PR_NUMBER" --base-ref "$BASE_SHA" --head-ref "$HEAD_SHA" > semver-plan.json
+        run: |
+          # O SHA de base do evento pode ficar atrás da branch de destino, que anda sem o PR mudar:
+          # o plano é feito sobre a ponta atual dela, que o checkout com fetch-depth 0 já trouxe.
+          base="refs/remotes/origin/$BASE_REF"
+          git rev-parse --verify --quiet "$base^{commit}" >/dev/null || base="$BASE_SHA"
+          python3 __SKILL_DIR__/scripts/release.py plan --format json \
+            --pr "$PR_NUMBER" --base-ref "$base" --head-ref "$HEAD_SHA" > semver-plan.json
       - name: Analisar com o Claude Code
         if: env.HAS_KEY == 'true'
         uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1
