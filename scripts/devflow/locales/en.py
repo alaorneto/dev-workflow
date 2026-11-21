@@ -208,6 +208,129 @@ MESSAGES: dict[str, str] = {
     # === issues.py, text.py, epics.py (#37): as chaves deste módulo ====================================
     # (fim de issues)
     # === config.py, semver.py, gh.py, plan.py (#38): as chaves deste módulo ==============================
+    # config.py: shape and types (the key comes first, in `dev-workflow.toml: `key` ...`)
+    "config.type.bool": "boolean",
+    "config.type.int": "integer",
+    "config.type.float": "number",
+    "config.type.str": "string",
+    "config.type.list": "list",
+    "config.type.dict": "table",
+    "config.type.other": "another type",
+    "config.shape.table": "must be a table, not {got}.",
+    "config.shape.type": "must be of type {expected}, not {got}.",
+    "config.key.unknown_close": "is not a known key. Did you mean `{close}`?",
+    "config.key.unknown": "is not a known key. Accepted: {accepted}.",
+    # config.py: values
+    "config.schema": "must be 1.",
+    "config.types.empty": "needs at least one type.",
+    "config.changelog.section_missing": "needs a section with id `{id}`.",
+    "config.one_of": "must be one of {accepted}.",
+    "config.types.prefixes": "needs at least one commit and branch prefix.",
+    "config.types.section": "does not match an id of `changelog.sections`.",
+    "config.regex.invalid": "is not a valid regular expression: {error}.",
+    "config.initial_version": "is not a SemVer version.",
+    "config.required": "is required.",
+    "config.files.search_or_regex": "needs exactly one of `search` and `regex`.",
+    "config.files.replace": "is required with `regex`.",
+    "config.files.marker": (
+        "needs a `{{current…}}` marker (for example `version = \"{{current}}\"`): without it the replacement "
+        "changes nothing."
+    ),
+    "config.files.count": "must be an integer greater than zero.",
+    "config.globs.empty": "needs at least one pattern.",
+    "config.floors.group": "needs a capture group with the version.",
+    "config.commit_message.tag": "must contain `{{tag}}`.",
+    "config.release.mark": "accepts `comment` and `milestone`.",
+    "config.file.not_utf8": "{path}: is not UTF-8; save the file as UTF-8.",
+    # semver.py
+    "semver.parse": "'{text}' is not a SemVer version (major.minor.patch[-pre][+build]).",
+    "semver.bump": "Level '{level}' does not increment the version.",
+    "semver.level.unknown": "Unknown level: '{level}'. Use one of {accepted}.",
+    "semver.zero_major.unknown": "Unknown 0.x policy: '{policy}'.",
+    "semver.channel.invalid": "Invalid pre-release channel: '{channel}'.",
+    "semver.channel.outside": "Pre-release channel '{channel}' is not in the project's list ({accepted}).",
+    "semver.channel.empty_list": "empty",
+    # gh.py
+    "gh.exit": "exit {code}",
+    "gh.missing.gh": (
+        "`{command}` was not found: the GitHub CLI is required (https://cli.github.com, then "
+        "`gh auth login`). To go on with git only, without GitHub, use {env}=1."
+    ),
+    "gh.missing.tool": "`{command}` was not found on the PATH; install it or check the PATH.",
+    "gh.timeout": "did not answer in {seconds} s; raise {env} if the network is slow.",
+    "gh.env.invalid": "{env} must be a JSON list of strings.",
+    "gh.api.failed": "GitHub answered {shown} on {route}: {detail}",
+    "gh.api.failed_after": "GitHub answered {shown} on {route} after {count} attempts: {detail}",
+    "gh.api.not_json": "the response of {route} is not valid JSON: {body}",
+    # plan.py: signals (the detail of each `Signal`; the `source` code does not change with the language)
+    "plan.signal.issue": "#{number} has the label `{label}`",
+    "plan.signal.pr_title": "PR title",
+    "plan.signal.commit": "`{type}` in {where}",
+    "plan.signal.bang": "`!` in {where}: {description}",
+    "plan.signal.breaking_commit": "BREAKING CHANGE in {where}: {note}",
+    "plan.signal.label": "label `{label}`",
+    "plan.signal.breaking_body": "BREAKING CHANGE in the PR body: {note}",
+    "plan.signal.surface_added": '`{path}` added to the "{surface}" surface',
+    "plan.signal.surface_modified": '`{path}` changed in the "{surface}" surface',
+    "plan.signal.surface_removed": '`{path}` removed from the "{surface}" surface',
+    # plan.py: notes
+    "plan.none": "none",
+    "plan.note.issue_type": (
+        "#{number} (cited by {change}) does not have exactly one type label ({found}): it decides neither "
+        "the level nor the changelog section. Leave a single type on the issue."
+    ),
+    "plan.note.reverted": (
+        "{revert} reverts {original} ({title}) before the release: both leave the level calculation and the "
+        "changelog."
+    ),
+    "plan.note.stale_analysis": (
+        "{change}: analysis older than the last commit of the PR; it does not count, and the change stays "
+        "without analysis until a new one is recorded."
+    ),
+    "plan.note.at_least_patch": "No signal asks for an increment; a published version bumps at least the patch.",
+    "plan.note.zero_major": (
+        "Version 0.x: a breaking change bumps the minor. To declare the API stable and go to 1.0.0, "
+        "use the `{label}` label on the release PR."
+    ),
+    "plan.note.floor_raised": "`{path}` declares the floor {version}: the level goes up from {old} to {new}.",
+    "plan.override.source": "label `{label}` on {change}",
+    "plan.override.no_reason": "(no reason given)",
+    # plan.py: problems
+    "plan.problem.nothing": "Nothing has accumulated since the last version; there is nothing to publish.",
+    "plan.problem.floor": (
+        "`{path}` declares the floor {version}, above the version {target} that would be published. "
+        "Fix the floor or classify the change so that the version reaches it."
+    ),
+    "plan.problem.tag_exists": (
+        "The tag {tag} already exists. A maintenance branch only takes fixes; check the branch and the "
+        "computed level."
+    ),
+    "plan.problem.analysis_missing": (
+        "Changes to public surfaces without a recorded analysis: {changes}. Record the analysis "
+        "(`release.py record-analysis`) or override the level with a reason."
+    ),
+    # plan.py: recorded analysis (format errors)
+    "plan.analysis.schema": 'The analysis needs `"schema": 1` and a `changes` list.',
+    "plan.analysis.object": "{where} must be an object.",
+    "plan.analysis.reference": "{where} needs `pr` (a number) or `commit` (a SHA with 7 characters or more).",
+    "plan.analysis.level": "{where}.level must be one of {accepted}.",
+    "plan.analysis.summary": "{where}.summary is required: one sentence with the reason for the level.",
+    "plan.analysis.evidence": "{where}.evidence must be a list of strings.",
+    # plan.py: changelog and justification of the number
+    "plan.changelog.part_of": "— part of {issues}",
+    "plan.changelog.empty": "No changes visible to those who use the project.",
+    "plan.origin.initial": "{version} (initial version, no tag)",
+    "plan.justification.headline": "**{origin} → {target}** — level **{level}**.",
+    "plan.justification.override": (
+        "Level overridden to **{level}** ({source}); the calculation gave **{natural}**. Reason: {reason}"
+    ),
+    "plan.justification.table_header": "| Change | Level | Signals |",
+    "plan.justification.unanalyzed": "public surface touched without analysis: {paths}",
+    "plan.justification.analysis_all": "Agent analysis: covers every change.",
+    "plan.justification.analysis_some": (
+        "Agent analysis: covers {analyzed} of {total} changes; the others only have deterministic signals."
+    ),
+    "plan.justification.analysis_none": "Agent analysis: missing; the level comes only from deterministic signals.",
     # (fim de plan)
     # === release.py (#39): as chaves deste módulo =====================================================
     # (fim de release)
