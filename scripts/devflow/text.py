@@ -7,6 +7,8 @@ import unicodedata
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
+from . import i18n
+
 _ISSUE = r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>\d+)"
 _CLOSING = r"close[sd]?|fix(?:e[sd])?|resolve[sd]?"
 ISSUE_REFERENCE = re.compile(rf"\b(?P<keyword>{_CLOSING}|refs?|part of)\b\s*:?\s+{_ISSUE}", re.IGNORECASE)
@@ -240,4 +242,4 @@ def slugify(title: str, limit: int = 40) -> str:
     if len(slug) > limit:
         cut = slug[: limit + 1]
         slug = cut[: cut.rfind("-")] if "-" in cut[1:] else slug[:limit]
-    return slug.rstrip("-") or "trabalho"
+    return slug.rstrip("-") or i18n.t("text.slug.fallback")

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import epics
+from . import epics, i18n
 from .config import Config, ConfigError, load
 from .gh import (
     CommandError,
@@ -98,15 +98,9 @@ def commit_msg(path: Path, cfg: Config, git: Git | None = None) -> int:
             f"Refs: #{issue}",
             str(path),
         )
-        print(f"commit-msg: 'Refs: #{issue}' acrescentado a partir da branch {branch}.")
+        print(cfg.t("issues.commit_msg.added", issue=issue, branch=branch))
         return 0
-    print(
-        "commit-msg: o commit precisa referenciar uma issue do GitHub.\n"
-        "  Acrescente um trailer 'Refs #N' (ou trabalhe numa branch <prefixo>/<N>-<slug>, com o prefixo de um\n"
-        f"  tipo: {', '.join(dict.fromkeys(prefixes))}). O sufixo '(#N)' e 'outro/repo#N' não contam.\n"
-        "  Sem issue? Crie uma antes: veja o skill dev-workflow.",
-        file=sys.stderr,
-    )
+    print(cfg.t("issues.commit_msg.missing", prefixes=", ".join(dict.fromkeys(prefixes))), file=sys.stderr)
     return 1
 
 
@@ -136,30 +130,30 @@ def validate_links(body: str, repository: str, fetch: IssueFetcher, cfg: Config)
     """Erros de vínculo: o PR cita ao menos uma issue existente com exatamente um label de tipo."""
     numbers = referenced_issues(body, repository)
     if not numbers:
-        return ["O corpo do PR não referencia issue: use `Closes #N` (entrega completa) ou `Refs #N` (parcial)."]
+        return [cfg.t("check.links.none")]
     errors: list[str] = []
     typed = 0
     for number in numbers:
         issue = fetch(number)
         if issue is None:
-            errors.append(f"#{number} não existe em {repository}.")
+            errors.append(cfg.t("check.links.missing", number=number, repository=repository))
             continue
         if "pull_request" in issue:
-            errors.append(f"#{number} é um pull request, não uma issue.")
+            errors.append(cfg.t("check.links.pull_request", number=number))
             continue
         labels = label_names(issue)
         if cfg.label("epic") in labels:
             continue
         types = sorted(labels & set(cfg.type_labels))
         if len(types) != 1:
-            found = ", ".join(types) or "nenhum"
+            found = ", ".join(types) or cfg.t("check.links.no_type")
             errors.append(
-                f"#{number} precisa de exatamente um label de tipo ({', '.join(cfg.type_labels)}); encontrado: {found}."
+                cfg.t("check.links.type", number=number, types=", ".join(cfg.type_labels), found=found)
             )
             continue
         typed += 1
     if typed == 0 and not errors:
-        errors.append("O PR referencia apenas epics; cite a issue filha entregue (`Closes #N`).")
+        errors.append(cfg.t("check.links.only_epics"))
     return errors
 
 
@@ -167,9 +161,9 @@ def is_exempt(pr: dict[str, Any], cfg: Config) -> str | None:
     """Motivo da isenção das verificações, ou ``None``."""
     author = str((pr.get("user") or {}).get("login", ""))
     if author in cfg.pr["exempt_authors"]:
-        return f"PR de {author}: isento do fluxo de issues."
+        return cfg.t("check.exempt.author", author=author)
     if cfg.is_release_pull(pr):
-        return "PR de release gerado pela automação: isento."
+        return cfg.t("check.exempt.release")
     return None
 
 
@@ -205,22 +199,15 @@ def check_pull_request(
 
     findings.errors.extend(validate_links(body, repository, fetch, cfg))
     for number in unclosed_list_items(body, repository):
-        findings.warnings.append(
-            f"#{number} está numa lista de fechamento (`Closes #A, #{number}`), mas o GitHub só fecha a primeira "
-            f"issue da lista: repita a palavra-chave (`Closes #{number}`) ou use `Refs #{number}` se a entrega "
-            "é parcial."
-        )
+        findings.warnings.append(cfg.t("check.closing_list", number=number))
 
     present = sections(body)
     for name in cfg.pr["required_sections"]:
         text = present.get(normalize_title(name))
         if text is None:
-            findings.add(cfg.severity("sections"), f"Falta a seção `## {name}` no corpo do PR (use o modelo de PR).")
+            findings.add(cfg.severity("sections"), cfg.t("check.section.missing", name=name))
         elif not meaningful(text):
-            findings.add(
-                cfg.severity("sections"),
-                f"A seção `## {name}` está vazia: preencha ou escreva `Não se aplica — motivo`.",
-            )
+            findings.add(cfg.severity("sections"), cfg.t("check.section.empty", name=name))
 
     if cfg.versioning_enabled:
         release = cfg.label("release")
@@ -230,40 +217,40 @@ def check_pull_request(
             shown = ", ".join(f"`{label}`" for label in asked)
             findings.errors.append(cfg.t("check.version_labels.many", labels=shown, release=release))
         for label in cfg.unknown_channel_labels(labels):
-            findings.warnings.append(cfg.t("check.version_labels.unknown", label=label, accepted=channel_labels or "—"))
+            known = channel_labels or cfg.t("check.channels.none")
+            findings.warnings.append(cfg.t("check.version_labels.unknown", label=label, accepted=known))
         overrides = overrides_of(labels, cfg)
         if len(overrides) > 1:
-            findings.errors.append(f"Mais de um label de sobreposição ({', '.join(overrides)}); deixe só um.")
+            findings.errors.append(cfg.t("check.override.many", levels=", ".join(overrides)))
         elif overrides:
+            override = cfg.override_label(overrides[0])
             if overrides[0] not in ("major", "minor", "patch"):
-                findings.errors.append(f"`{cfg.override_label(overrides[0])}` não é major, minor nem patch.")
+                findings.errors.append(cfg.t("check.override.level", label=override))
             if not is_release(labels, cfg):
-                also = f" ou com um label de canal ({channel_labels})" if channel_labels else ""
+                also = cfg.t("check.override.channels", labels=channel_labels) if channel_labels else ""
                 findings.errors.append(
-                    f"`{cfg.override_label(overrides[0])}` só vale em PR marcado com `{release}`{also}: a sobreposição "
-                    "decide o número da versão que este PR publica."
+                    cfg.t("check.override.needs_release", label=override, release=release, also=also)
                 )
             if not override_reason(body, cfg):
                 findings.errors.append(
-                    f"Sobreposição de versão sem motivo: escreva `{cfg.pr['override_reason_marker']}: <motivo>` "
-                    f"na seção `## {cfg.pr['version_section']}`."
+                    cfg.t(
+                        "check.override.reason",
+                        marker=cfg.pr["override_reason_marker"],
+                        section=cfg.pr["version_section"],
+                    )
                 )
         marker = cfg.release_subject_pattern()
-        forged = [("título", title)] if marker.match(title) else []
-        forged += [("commit", subject) for subject in dict.fromkeys(commits) if marker.match(subject)]
-        for where, subject in forged[:1]:
-            findings.errors.append(
-                f"O {where} `{subject}` tem o formato do commit de release, que só a automação cria: ele não "
-                f"publica versão e some do changelog. Troque o texto; para publicar, use o label `{release}`."
-            )
+        forged = [cfg.t("check.forged.title", subject=title, release=release)] if marker.match(title) else []
+        forged += [
+            cfg.t("check.forged.commit", subject=subject, release=release)
+            for subject in dict.fromkeys(commits)
+            if marker.match(subject)
+        ]
+        findings.errors.extend(forged[:1])
 
     conventional = parse_conventional(title)
     if not re.match(cfg.pr["title_pattern"], title):
-        findings.add(
-            cfg.severity("title"),
-            f"O título `{title}` não segue Conventional Commits (`<tipo>(<escopo>): <assunto>`); ele vira o commit "
-            "de um squash e entra no changelog.",
-        )
+        findings.add(cfg.severity("title"), cfg.t("check.title", title=title))
 
     closing = referenced_issues(body, repository, closing_only=True)
     types_seen: set[str] = set()
@@ -284,33 +271,38 @@ def check_pull_request(
         if missing:
             findings.add(
                 cfg.severity("issue_sections"),
-                f"#{number} está sem as seções do modelo: {', '.join(missing)} (use `Não se aplica — motivo`).",
+                cfg.t("check.issue.sections", number=number, missing=", ".join(missing)),
             )
         boxes = checkboxes(section(issue_body, cfg.issues["acceptance_section"]))
         pending = [label for done, label in boxes if not done]
         if pending:
             findings.add(
                 cfg.severity("unchecked_criteria"),
-                f"#{number} tem {len(pending)} de {len(boxes)} critérios de aceite sem marcar; marque os "
-                "verificados ou registre a dispensa na issue antes do merge.",
+                cfg.t("check.issue.criteria", number=number, pending=len(pending), total=len(boxes)),
             )
     if conventional and types_seen:
         accepted = {prefix for kind in types_seen for prefix in cfg.types[kind]["prefixes"]}
         if conventional.type not in accepted:
             findings.add(
                 cfg.severity("type_mismatch"),
-                f"O título usa `{conventional.type}`, mas as issues vinculadas são de tipo {', '.join(sorted(types_seen))} "
-                f"(prefixos esperados: {', '.join(sorted(accepted))}). Confira a classificação.",
+                cfg.t(
+                    "check.type_mismatch",
+                    type=conventional.type,
+                    types=", ".join(sorted(types_seen)),
+                    prefixes=", ".join(sorted(accepted)),
+                ),
             )
     return findings
 
 
-def _annotate(kind: str, message: str) -> None:
+def _annotate(kind: str, message: str, cfg: Config) -> None:
     single = message.replace("\r", " ").replace("\n", " ")
     if os.environ.get("GITHUB_ACTIONS"):
-        print(f"::{kind} title=Verificação do PR::{single}")
+        print(f"::{kind} title={cfg.t('check.annotation.title')}::{single}")
+    elif kind == "error":
+        print(f"{cfg.t('check.annotation.error')}: {single}")
     else:
-        print(f"{'ERRO' if kind == 'error' else 'aviso'}: {single}")
+        print(f"{cfg.t('check.annotation.warning')}: {single}")
 
 
 def _pr_number(given: int | None) -> int | None:
@@ -325,14 +317,11 @@ def check_pr_command(given: int | None, cfg: Config) -> int:
     number = _pr_number(given)
     github = GitHub(current_repository(Git(cfg.root)))
     if number is None or not github.enabled:
-        print(
-            "uso: github_issues.py check-pr --pr N (ou PR_NUMBER), com GITHUB_REPOSITORY ou `gh` autenticado",
-            file=sys.stderr,
-        )
+        print(cfg.t("check.usage"), file=sys.stderr)
         return 2
     pr = github.pull(number)
     if pr is None:
-        print(f"PR #{number} não encontrado em {github.repository}.", file=sys.stderr)
+        print(cfg.t("check.pr.not_found", number=number, repository=github.repository), file=sys.stderr)
         return 1
     cache: dict[int, dict[str, Any] | None] = {}
 
@@ -349,11 +338,11 @@ def check_pr_command(given: int | None, cfg: Config) -> int:
     for note in findings.notes:
         print(note)
     for warning in findings.warnings:
-        _annotate("warning", warning)
+        _annotate("warning", warning, cfg)
     for error in findings.errors:
-        _annotate("error", error)
+        _annotate("error", error, cfg)
     if not findings.errors:
-        print(f"PR #{number} verificado: {len(findings.warnings)} aviso(s).")
+        print(cfg.t("check.done", number=number, count=len(findings.warnings)))
     return 1 if findings.errors else 0
 
 
@@ -369,56 +358,52 @@ def evidence_comment(
     lines = [EVIDENCE_MARK.format(number=number)]
     if closing:
         lines.append(
-            f"**Entregue pelo PR #{number}**, mesclado por @{merged_by}."
+            cfg.t("evidence.delivered.by", number=number, merged_by=merged_by)
             if merged_by != "merge"
-            else f"**Entregue pelo PR #{number}.**"
+            else cfg.t("evidence.delivered", number=number)
         )
     else:
-        lines.append(f"**Entrega parcial pelo PR #{number}** (o PR cita esta issue com `Refs`; ela continua aberta).")
-    lines += ["", "**Commits**"]
+        lines.append(cfg.t("evidence.partial", number=number))
+    lines += ["", cfg.t("evidence.commits")]
     for commit in commits:
         subject = str((commit.get("commit") or {}).get("message", "")).splitlines()[0:1]
         lines.append(f"- {str(commit.get('sha', ''))[:7]} {subject[0] if subject else ''}".rstrip())
     if not commits:
-        lines.append("- (a lista de commits não pôde ser lida; veja o PR)")
+        lines.append(cfg.t("evidence.commits.unreadable"))
     if closing:
-        for label, key in (("Testes executados", "tests_section"), ("Documentação", "docs_section")):
+        for label, key in ((cfg.t("evidence.tests"), "tests_section"), (cfg.t("evidence.docs"), "docs_section")):
             text = meaningful(section(body, cfg.pr[key]))
-            lines += ["", f"**{label}** (declarado no PR)", text or "- Não informado no PR."]
+            lines += ["", cfg.t("evidence.declared", label=label), text or cfg.t("evidence.not_stated")]
         boxes = checkboxes(section(str(issue.get("body") or ""), cfg.issues["acceptance_section"]))
         pending = [label for done, label in boxes if not done]
         lines.append("")
         if not boxes:
-            lines.append("**Critérios de aceite:** a issue não tem lista de critérios.")
+            lines.append(cfg.t("evidence.criteria.none"))
         elif pending:
-            lines.append(f"**Critérios de aceite:** {len(pending)} de {len(boxes)} sem marcar no momento do merge:")
+            lines.append(cfg.t("evidence.criteria.pending", pending=len(pending), total=len(boxes)))
             lines += [f"- [ ] {label}" for label in pending]
-            lines.append("Marque-os se foram verificados, ou reabra a issue e registre o que falta.")
+            lines.append(cfg.t("evidence.criteria.pending_hint"))
         else:
-            lines.append(f"**Critérios de aceite:** os {len(boxes)} marcados.")
+            lines.append(cfg.t("evidence.criteria.done", total=len(boxes)))
         if cfg.versioning_enabled:
             lines.append("")
             channels = cfg.requested_channels(label_names(pr))
             if channels and cfg.label("release") not in label_names(pr):
                 lines.append(cfg.t("evidence.version.prerelease", channel=channels[-1]))
             elif is_release(label_names(pr), cfg):
-                lines.append(
-                    "**Versão:** o PR está marcado para versionar; a automação de release comenta aqui quando a versão sair."
-                )
+                lines.append(cfg.t("evidence.version.release"))
             else:
-                lines.append(
-                    "**Versão:** o PR não gera versão; esta entrega fica acumulada e entra na próxima versão publicada."
-                )
+                lines.append(cfg.t("evidence.version.none"))
     return "\n".join(lines) + "\n"
 
 
 def pr_merged(number: int, github: GitHub, cfg: Config) -> int:
     pr = github.pull(number)
     if pr is None:
-        print(f"PR #{number} não encontrado.", file=sys.stderr)
+        print(cfg.t("issues.merged.not_found", number=number), file=sys.stderr)
         return 1
     if not pr.get("merged"):
-        print(f"PR #{number} não foi mesclado; nada a registrar.")
+        print(cfg.t("issues.merged.not_merged", number=number))
         return 0
     trusted = cfg.versioning["trusted_bots"]
     exempt = is_exempt(pr, cfg)
@@ -436,10 +421,10 @@ def pr_merged(number: int, github: GitHub, cfg: Config) -> int:
             continue
         existing = github.comments(issue_number)
         if any(mark in str(c.get("body", "")) and is_trusted_author(c, trusted) for c in existing):
-            print(f"#{issue_number}: evidências do PR #{number} já registradas.")
+            print(cfg.t("issues.merged.already", issue=issue_number, number=number))
             continue
         github.add_comment(issue_number, evidence_comment(pr, commits, issue, cfg, closing=issue_number in closing))
-        print(f"#{issue_number}: evidências do PR #{number} registradas.")
+        print(cfg.t("issues.merged.recorded", issue=issue_number, number=number))
     return 0
 
 
@@ -449,17 +434,14 @@ def pr_merged(number: int, github: GitHub, cfg: Config) -> int:
 def branch_name(issue: dict[str, Any], cfg: Config) -> str:
     kind = issue_type(issue, cfg)
     if kind is None:
-        raise ValueError(
-            f"#{issue.get('number')} precisa de exatamente um label de tipo ({', '.join(cfg.type_labels)}) "
-            "antes de virar branch."
-        )
+        raise ValueError(cfg.t("issues.start.untyped", number=issue.get("number"), types=", ".join(cfg.type_labels)))
     return f"{cfg.types[kind]['prefixes'][0]}/{issue['number']}-{slugify(str(issue.get('title', '')))}"
 
 
 def start(number: int, github: GitHub, cfg: Config, git: Git, *, dry_run: bool) -> int:
     issue = github.issue(number)
     if issue is None or "pull_request" in issue:
-        print(f"#{number} não é uma issue de {github.repository}.", file=sys.stderr)
+        print(cfg.t("issues.start.not_issue", number=number, repository=github.repository), file=sys.stderr)
         return 1
     try:
         name = branch_name(issue, cfg)
@@ -470,19 +452,16 @@ def start(number: int, github: GitHub, cfg: Config, git: Git, *, dry_run: bool) 
         print(name)
         return 0
     if git("status", "--porcelain", "--untracked-files=no"):  # arquivo não rastreado não impede a troca
-        print(
-            "A árvore de trabalho tem mudanças: commit, descarte ou use outro worktree antes de trocar de branch.",
-            file=sys.stderr,
-        )
+        print(cfg.t("issues.start.dirty"), file=sys.stderr)
         return 1
     if git.ok("rev-parse", "--verify", "--quiet", f"refs/heads/{name}"):
         git("switch", name)
-        print(f"A branch {name} já existe; trocado para ela.")
+        print(cfg.t("issues.start.exists", name=name))
         return 0
     base = f"origin/{cfg.default_branch}"
     git("fetch", "origin", cfg.default_branch)
     git("switch", "-c", name, base)
-    print(f"Branch {name} criada a partir de {base}.")
+    print(cfg.t("issues.start.created", name=name, base=base))
     return 0
 
 
@@ -494,7 +473,10 @@ def sync_labels(cfg: Config) -> int:
     for name, (color, description) in cfg.all_labels().items():
         completed = run_gh(["label", "create", name, "--color", color, "--description", description, "--force"])
         failed |= completed.returncode != 0
-        print(f"label {name} {'ok' if completed.returncode == 0 else 'ERRO: ' + completed.stderr.strip()}")
+        if completed.returncode == 0:
+            print(cfg.t("issues.labels.ok", name=name))
+        else:
+            print(cfg.t("issues.labels.failed", name=name, error=completed.stderr.strip()))
     return 1 if failed else 0
 
 
@@ -504,36 +486,37 @@ def sync_labels(cfg: Config) -> int:
 def _issue_number(value: str) -> int:
     digits = value.strip().lstrip("#")
     if not digits.isdigit():
-        raise argparse.ArgumentTypeError(f"`{value}` não é um número de issue")
+        raise argparse.ArgumentTypeError(i18n.t("issues.cli.not_a_number", value=value))
     return int(digits)
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="github_issues.py",
-        description="Issues, PRs e epics do fluxo dev-workflow. Saída: 0 ok, 1 falha, 2 uso ou configuração.",
+    """No idioma ativo: ``_main`` lê a configuração antes de montar o parser."""
+    t = i18n.t
+    parser = argparse.ArgumentParser(prog="github_issues.py", description=t("issues.cli.description"))
+    sub = parser.add_subparsers(dest="command", required=True, metavar=t("issues.cli.command"))
+    command = sub.add_parser("commit-msg", help=t("issues.cli.commit_msg"))
+    command.add_argument(
+        "file", metavar=t("issues.cli.commit_msg.file_metavar"), help=t("issues.cli.commit_msg.file")
     )
-    sub = parser.add_subparsers(dest="command", required=True, metavar="comando")
-    command = sub.add_parser("commit-msg", help="hook do git: exige referência a uma issue na mensagem")
-    command.add_argument("file", metavar="ARQUIVO", help="o arquivo da mensagem que o git passa ao hook")
-    command = sub.add_parser("check-pr", help="a verificação do PR (vínculo, seções, labels, título)")
-    command.add_argument("--pr", type=_issue_number, help="número do PR (padrão: PR_NUMBER)")
-    command = sub.add_parser("pr-merged", help="comenta as evidências do PR mesclado nas issues citadas")
-    command.add_argument("--pr", type=_issue_number, help="número do PR (padrão: PR_NUMBER)")
-    command = sub.add_parser("start", help="cria (ou troca para) a branch <prefixo>/<N>-<slug> da issue")
+    command = sub.add_parser("check-pr", help=t("issues.cli.check_pr"))
+    command.add_argument("--pr", type=_issue_number, help=t("issues.cli.pr"))
+    command = sub.add_parser("pr-merged", help=t("issues.cli.pr_merged"))
+    command.add_argument("--pr", type=_issue_number, help=t("issues.cli.pr"))
+    command = sub.add_parser("start", help=t("issues.cli.start"))
     command.add_argument("issue", type=_issue_number, metavar="N")
-    command.add_argument("--dry-run", action="store_true", help="só mostra o nome da branch")
-    sub.add_parser("sync-labels", help="cria ou atualiza os labels que o fluxo usa")
-    command = sub.add_parser("sync-epic", help="cria sub-issues e 'blocked by' a partir da seção Itens")
+    command.add_argument("--dry-run", action="store_true", help=t("issues.cli.start.dry_run"))
+    sub.add_parser("sync-labels", help=t("issues.cli.sync_labels"))
+    command = sub.add_parser("sync-epic", help=t("issues.cli.sync_epic"))
     command.add_argument("numbers", type=_issue_number, nargs="*", metavar="N")
-    command.add_argument("--all", action="store_true", help="todas as issues com o label de epic")
+    command.add_argument("--all", action="store_true", help=t("issues.cli.all"))
     command.add_argument("--dry-run", action="store_true")
-    command = sub.add_parser("sync-checklist", help="acerta as caixas da seção Itens dos epics")
+    command = sub.add_parser("sync-checklist", help=t("issues.cli.sync_checklist"))
     command.add_argument("numbers", type=_issue_number, nargs="*", metavar="N")
-    command.add_argument("--all", action="store_true", help="todas as issues com o label de epic")
-    command.add_argument("--parent-of", type=_issue_number, metavar="N", help="o epic pai da issue N")
+    command.add_argument("--all", action="store_true", help=t("issues.cli.all"))
+    command.add_argument("--parent-of", type=_issue_number, metavar="N", help=t("issues.cli.parent_of"))
     command.add_argument("--dry-run", action="store_true")
-    command = sub.add_parser("close-epic", help="fecha o epic pai quando a última filha fecha")
+    command = sub.add_parser("close-epic", help=t("issues.cli.close_epic"))
     command.add_argument("--parent-of", type=_issue_number, metavar="N", required=True)
     command.add_argument("--dry-run", action="store_true")
     return parser
@@ -542,7 +525,7 @@ def _parser() -> argparse.ArgumentParser:
 def _repository() -> str:
     repository = current_repository(Git())
     if not repository:
-        raise RuntimeError("não consegui identificar o repositório (GITHUB_REPOSITORY, remoto origin ou `gh`).")
+        raise RuntimeError(i18n.t("issues.cli.repository"))
     return repository
 
 
@@ -561,8 +544,8 @@ def _sync_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     parent_of = getattr(args, "parent_of", None)
     chosen = sum((bool(args.numbers), args.all, parent_of is not None))
     if chosen != 1:
-        how = "N [N...], --all ou --parent-of N" if name == "sync-checklist" else "N [N...] ou --all"
-        parser.error(f"{name}: use exatamente um entre {how}")
+        how = i18n.t("issues.cli.choose.checklist") if name == "sync-checklist" else i18n.t("issues.cli.choose.epic")
+        parser.error(i18n.t("issues.cli.choose", command=name, options=how))
     selection = None if args.all else list(args.numbers)
     try:
         repository = _repository()
@@ -586,23 +569,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SystemExit as exc:  # argparse: --help (0) e uso errado (2)
         return exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 2)
     except CommandError as exc:
-        print(f"ERRO: {exc}", file=sys.stderr)
+        print(i18n.t("issues.error", error=exc), file=sys.stderr)
         return 1
     except (RuntimeError, OSError, ValueError) as exc:
         if isinstance(exc, ConfigError):
             print(str(exc), file=sys.stderr)
             return 2
-        print(f"ERRO: {exc}", file=sys.stderr)
+        print(i18n.t("issues.error", error=exc), file=sys.stderr)
         return 1
 
 
 def _main(argv: Sequence[str] | None = None) -> int:
+    # A configuração vem antes do parser, que fala o idioma do projeto; o erro dela espera o parser,
+    # para `--help` e o uso errado responderem como sempre.
+    try:
+        cfg, problem = load(), None
+    except ConfigError as exc:
+        cfg, problem = None, exc
     parser = _parser()
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
-    try:
-        cfg = load()
-    except ConfigError as exc:
-        print(str(exc), file=sys.stderr)
+    if cfg is None:
+        print(str(problem), file=sys.stderr)
         return 2
     epics.configure(
         items_section=cfg.issues["items_section"],
@@ -616,7 +603,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     if args.command == "pr-merged":
         number = _pr_number(args.pr)
         if number is None:
-            parser.error("pr-merged: informe --pr N (ou PR_NUMBER)")
+            parser.error(i18n.t("issues.cli.pr_merged.number"))
         return pr_merged(number, GitHub(_repository()), cfg)
     if args.command == "start":
         return start(args.issue, GitHub(_repository()), cfg, Git(cfg.root), dry_run=args.dry_run)
