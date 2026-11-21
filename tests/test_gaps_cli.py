@@ -240,10 +240,12 @@ class OfflineTest(SandboxCase):
         refused = box.run("github_issues.py", "check-pr", "--pr", "10", env=OFFLINE)
         self.assertEqual(refused.returncode, 2)
         self.assertIn("uso: github_issues.py check-pr", refused.stderr)
-        # Sem a API a issue não é lida, e a mensagem diz que ela não existe (veja o relatório da #34).
+        # Sem a API a issue não é lida: a mensagem diz isso, e não que a issue não existe (#56).
         refused = box.run("github_issues.py", "start", "42", "--dry-run", env=OFFLINE)
         self.assertEqual(refused.returncode, 1)
-        self.assertIn("#42 não é uma issue de acme/demo.", refused.stderr)
+        self.assertIn("start precisa do GitHub", refused.stderr)
+        self.assertIn("DEV_WORKFLOW_OFFLINE", refused.stderr)
+        self.assertNotIn("não é uma issue", refused.stderr)
         self.assertNoGitHub()
 
     def test_the_commit_msg_hook_never_needs_github(self):
@@ -258,14 +260,15 @@ class OfflineTest(SandboxCase):
     # Defeito encontrado (não corrigido aqui, regra da #34): `sync-labels` ignora o modo offline e
     # chama `gh label create` mesmo com DEV_WORKFLOW_OFFLINE=1, ao contrário de `bootstrap.py init`,
     # que pula os labels offline. O teste documenta o comportamento atual.
-    def test_sync_labels_still_calls_gh_when_offline(self):
+    def test_sync_labels_does_not_call_gh_when_offline(self):
         box = self.box
-        self.assertRan(box.run("github_issues.py", "sync-labels", env=OFFLINE))
-        self.assertIn("label create bug", box.state()["cli"])
+        refused = box.run("github_issues.py", "sync-labels", env=OFFLINE)
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("DEV_WORKFLOW_OFFLINE", refused.stderr)
+        self.assertNotIn("cli", box.state())  # nenhuma chamada ao `gh` (#55)
 
-    # Defeito encontrado: no modo pull-request, offline, a branch de release é enviada e a saída
-    # diz "PR de release #? aberto", embora nenhum PR tenha sido aberto (create_pull devolve None).
-    @unittest.expectedFailure
+    # No modo pull-request, offline, a branch de release é enviada e a saída diz que o PR não foi
+    # aberto e como abri-lo; antes dizia "PR de release #? aberto" (#54).
     def test_pull_request_mode_offline_does_not_claim_to_open_a_pr(self):
         box = self.box
         box.write({".github/dev-workflow.toml": BASE_CONFIG + '\n[release]\nmode = "pull-request"\n'})
@@ -274,6 +277,9 @@ class OfflineTest(SandboxCase):
         box.merge_pr(10, "fix: handle the empty list", FIX)
         out = self.assertRan(box.release("--force", env=OFFLINE))
         self.assertNotIn("PR de release #? aberto", out)
+        self.assertIn("o PR de release não foi aberto", out)
+        self.assertIn("gh pr create --base main --head release/next", out)
+        self.assertEqual(box.git("ls-remote", "--heads", "origin", "release/next").count("release/next"), 1)
 
 
 if __name__ == "__main__":

@@ -642,8 +642,10 @@ def open_release_pr(session: Session, plan: Plan) -> None:
     header = f"{RELEASE_PR_MARK}\n{cfg.t('release.pr.header', tag=tag)}\n\n"
     limit = BODY_LIMIT - NOTES_MARGIN - len(header)
     body = header + release_notes(plan, cfg, session.links, limit=limit, ref=branch)
-    existing = github.open_pulls_from(branch)
-    if existing:
+    existing = github.open_pulls_from(branch) if github.enabled else []
+    if not github.enabled:  # sem a API não há PR: dizer o que de fato aconteceu e como concluir
+        print(cfg.t("release.pr.offline", branch=branch, tag=tag, base=plan.branch, title=title))
+    elif existing:
         github.update_pull(int(existing[0]["number"]), {"title": title, "body": body})
         print(cfg.t("release.pr.updated", number=existing[0]["number"], tag=tag))
     else:

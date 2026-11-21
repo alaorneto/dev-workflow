@@ -32,6 +32,7 @@ from .gh import (
     current_repository,
     is_trusted_author,
     label_names,
+    offline,
     remote_slug,
     run_gh,
     utf8_streams,
@@ -439,6 +440,9 @@ def branch_name(issue: dict[str, Any], cfg: Config) -> str:
 
 
 def start(number: int, github: GitHub, cfg: Config, git: Git, *, dry_run: bool) -> int:
+    if not github.enabled:  # sem a API a issue não é lida: dizer isso, e não que ela não existe
+        print(cfg.t("issues.start.offline", number=number), file=sys.stderr)
+        return 1
     issue = github.issue(number)
     if issue is None or "pull_request" in issue:
         print(cfg.t("issues.start.not_issue", number=number, repository=github.repository), file=sys.stderr)
@@ -469,6 +473,9 @@ def start(number: int, github: GitHub, cfg: Config, git: Git, *, dry_run: bool) 
 
 
 def sync_labels(cfg: Config) -> int:
+    if offline():
+        print(cfg.t("issues.labels.offline"), file=sys.stderr)
+        return 1
     failed = False
     for name, (color, description) in cfg.all_labels().items():
         completed = run_gh(["label", "create", name, "--color", color, "--description", description, "--force"])

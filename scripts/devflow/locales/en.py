@@ -387,6 +387,14 @@ MESSAGES: dict[str, str] = {
     "epics.sync.candidates": ", {count} candidates without an issue",
     "epics.sync.failed": "ERROR {operation}: {error}",
     "epics.sync.problem": "mismatch: {problem}",
+    "issues.labels.offline": (
+        "sync-labels needs GitHub, and it is turned off (DEV_WORKFLOW_OFFLINE): no label was created or updated. "
+        "Run it again without the variable."
+    ),
+    "issues.start.offline": (
+        "start needs GitHub to read the type and the title of #{number}, and it is turned off "
+        "(DEV_WORKFLOW_OFFLINE). Run it again without the variable."
+    ),
     # (fim de issues)
     # === config.py, semver.py, gh.py, plan.py (#38): as chaves deste módulo ==============================
     # config.py: shape and types (the key comes first, in `dev-workflow.toml: `key` ...`)
@@ -641,6 +649,11 @@ MESSAGES: dict[str, str] = {
     "release.analysis.comment.columns": "| Change | Level | Reason |",
     "release.analysis.comment.footer": (
         "<sub>The analysis only raises the level computed from the deterministic signals; it never lowers it.</sub>"
+    ),
+    "release.pr.offline": (
+        "Branch `{branch}` pushed with the release commit of {tag}. GitHub is turned off "
+        "(DEV_WORKFLOW_OFFLINE), so the release PR was not opened; open it with "
+        "`gh pr create --base {base} --head {branch} --title \"{title}\"`, or run again with GitHub access."
     ),
     # (fim de release)
     # === bootstrap.py (#40): as chaves deste módulo =================================================
