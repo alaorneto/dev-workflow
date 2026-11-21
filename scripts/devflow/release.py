@@ -67,6 +67,43 @@ class ReleaseError(RuntimeError):
     """Erro que interrompe a release com mensagem para quem opera."""
 
 
+# O que o git escreve quando o servidor recusa o push por regra, não porque a branch andou.
+PUSH_REFUSED = re.compile(
+    r"protected branch|GH006|GH013|permission|denied|\b403\b|not allowed|rule violations", re.IGNORECASE
+)
+
+
+def push_refused(stderr: str) -> bool:
+    return bool(PUSH_REFUSED.search(stderr or ""))
+
+
+def refused_push_message(branch: str, stderr: str) -> str:
+    detail = " ".join((stderr or "").split())[:500]
+    return (
+        f"o push do commit de release para `{branch}` foi recusado pelo GitHub (proteção de branch ou permissão "
+        f"do token), não porque a branch andou: {detail}\n"
+        "Duas saídas: `release.mode = \"pull-request\"` na configuração, para a release chegar à branch por um PR; "
+        "ou um segredo `RELEASE_TOKEN` com permissão de escrever nela (por exemplo, de quem pode passar pela "
+        "proteção). Nada foi publicado; rode de novo depois de ajustar."
+    )
+
+
+def read_analysis_file(path: str) -> Any:
+    """O JSON de uma análise de versão, com erro legível para arquivo ausente, ilegível ou inválido."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise ReleaseError(f"o arquivo de análise `{path}` não existe.") from None
+    except UnicodeDecodeError:
+        raise ReleaseError(f"o arquivo de análise `{path}` não está em UTF-8.") from None
+    except OSError as exc:
+        raise ReleaseError(f"não consegui ler o arquivo de análise `{path}`: {exc.strerror or exc}.") from None
+    try:
+        return json.loads(text)
+    except ValueError as exc:
+        raise ReleaseError(f"o arquivo de análise `{path}` não é JSON válido: {exc}.") from None
+
+
 # --- arquivos de versão ------------------------------------------------------------------------
 
 
@@ -135,6 +172,10 @@ def apply_version_files(
         if entry["path"] not in contents:
             try:
                 original = path.read_bytes().decode("utf-8")
+            except UnicodeDecodeError:
+                raise ReleaseError(
+                    f"{entry['path']}: não está em UTF-8; converta o arquivo (a versão é escrita em UTF-8)."
+                ) from None
             except OSError as exc:
                 raise ReleaseError(f"{entry['path']}: não consegui ler ({exc}).") from exc
             contents[entry["path"]] = (original, original)
@@ -446,7 +487,9 @@ def release_commit_refusal(session: Session, collector: Collector, commit: Commi
         merge = MERGE_PR.match(carrier.subject)
         owner = (github.repository or "").split("/", 1)[0].lower()
         ours = merge is not None and merge.group("branch") == branch
-        if carrier.sha == commit.sha or (ours and (not owner or str(merge.group("owner")).lower() == owner)):
+        if carrier.sha == commit.sha or (
+            ours and merge is not None and (not owner or str(merge.group("owner")).lower() == owner)
+        ):
             return None
         return f"chegou pelo merge {carrier.sha[:7]}, que não é do PR de release (`{branch}` deste repositório)"
     number = collector.pr_number(carrier)
@@ -653,7 +696,7 @@ def run(session: Session, args: argparse.Namespace) -> int:
     override = Override(args.level, args.reason or "(motivo não informado)", "execução manual") if args.level else None
     analyses = []
     if args.analysis_file:
-        analyses.append(validate_analysis(json.loads(Path(args.analysis_file).read_text(encoding="utf-8"))))
+        analyses.append(validate_analysis(read_analysis_file(args.analysis_file)))
     if session.has_remote:
         git("fetch", "--tags", REMOTE, check=False)
     for _ in range(MAX_ROUNDS):
@@ -705,6 +748,8 @@ def run(session: Session, args: argparse.Namespace) -> int:
             return 0
         if session.has_remote:
             pushed = git.raw("push", REMOTE, f"HEAD:refs/heads/{branch}")
+            if pushed.returncode != 0 and push_refused(pushed.stderr):
+                raise ReleaseError(refused_push_message(branch, pushed.stderr))
             if pushed.returncode != 0:  # a branch andou: refaz o plano sobre o novo estado
                 print("A branch remota avançou durante a release; recalculando.")
                 git("fetch", "--tags", REMOTE, branch)
@@ -908,8 +953,9 @@ def analysis_comment(data: dict[str, Any]) -> str:
     ]
     for entry in data["changes"]:
         key = f"#{entry['pr']}" if "pr" in entry else entry["commit"][:7]
-        evidence = "<br>".join(f"`{item}`" for item in entry["evidence"][:6])
-        summary = entry["summary"].replace("|", "/") + (f"<br>{evidence}" if evidence else "")
+        shown = (" ".join(item.replace("`", "'").split()) for item in entry["evidence"][:6])
+        evidence = "<br>".join(f"`{item}`" for item in shown)
+        summary = " ".join(entry["summary"].replace("|", "/").split()) + (f"<br>{evidence}" if evidence else "")
         lines.append(f"| {key} | {entry['level']}{' ⚠' if entry['breaking'] else ''} | {summary} |")
     if data["notes"]:
         lines += ["", data["notes"]]
@@ -919,10 +965,18 @@ def analysis_comment(data: dict[str, Any]) -> str:
 
 def record_analysis(session: Session, args: argparse.Namespace) -> int:
     try:
-        data = validate_analysis(json.loads(Path(args.file).read_text(encoding="utf-8")))
-    except (OSError, ValueError) as exc:
+        data = validate_analysis(read_analysis_file(args.file))
+    except (OSError, ValueError, ReleaseError) as exc:
         print(f"Análise inválida: {exc}", file=sys.stderr)
         return 1
+    if not data["head"] and session.github.enabled:
+        # Sem `head`, a análise não diria o que viu e não contaria: vale a ponta atual do PR.
+        head = str(((session.github.pull(args.pr) or {}).get("head") or {}).get("sha") or "")
+        if head:
+            data["head"] = head
+            print(f"A análise não diz o `head` analisado; registrada para a ponta atual do PR ({head[:7]}).")
+    if not data["head"]:
+        print("Aviso: a análise não diz o `head` analisado; ela não vai contar na release.", file=sys.stderr)
     if args.dry_run or not session.github.enabled:
         print(analysis_comment(data))
         return 0

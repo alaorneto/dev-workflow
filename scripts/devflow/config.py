@@ -13,6 +13,7 @@ da composição, porque é ele que decide quais padrões compor.
 from __future__ import annotations
 
 import copy
+import difflib
 import fnmatch
 import os
 import re
@@ -133,6 +134,72 @@ def _fail(key: str, message: str) -> None:
     raise ConfigError(f"dev-workflow.toml: `{key}` {message}")
 
 
+# Esquema das tabelas abertas (as chaves são do projeto) e dos itens de listas de tabelas. O resto
+# do esquema sai dos próprios padrões: toda chave aceita tem um valor padrão, e o tipo dele é o tipo
+# exigido.
+_TYPE_SPEC: dict[str, Any] = {"color": "", "description": "", "prefixes": [""], "level": "", "section": ""}
+OPEN_TABLES: dict[str, Any] = {
+    "types": _TYPE_SPEC,
+    "labels.extra": {"color": "", "description": ""},
+    "commits.levels": "",
+    "issues.sections": [""],
+}
+LIST_ITEMS: dict[str, Any] = {
+    "versioning.files": {"path": "", "search": "", "regex": "", "replace": "", "count": 1},
+    "versioning.public_surfaces": {"name": "", "globs": [""], "on_add": "", "on_modify": "", "on_remove": ""},
+    "versioning.floors": {"globs": [""], "regex": ""},
+    "changelog.sections": {"id": "", "title": ""},
+}
+OWN_TYPE_MESSAGES = frozenset({"versioning.prerelease", "versioning.prerelease.channels", "labels.prerelease_prefix"})
+_TYPE_NAMES = {bool: "booleano", int: "inteiro", float: "número", str: "texto", list: "lista", dict: "tabela"}
+CURRENT_MARKER = re.compile(r"\{current(?:_[a-z0-9_]+)?\}")
+
+
+def _kind(value: Any) -> type:
+    return bool if isinstance(value, bool) else type(value)
+
+
+def _unknown(key: str, where: str, accepted: Iterable[str]) -> None:
+    names = sorted(accepted)
+    close = difflib.get_close_matches(key, names, n=1, cutoff=0.6)
+    hint = f" Você quis dizer `{close[0]}`?" if close else f" Aceitas: {', '.join(f'`{n}`' for n in names)}."
+    _fail(where, f"não é uma chave conhecida.{hint}")
+
+
+def _check_shape(value: Any, template: Any, where: str) -> None:
+    """Recusa chave desconhecida e tipo errado, com a chave na mensagem."""
+    if where in OPEN_TABLES:
+        if not isinstance(value, dict):
+            _fail(where, f"deve ser uma tabela, não {_TYPE_NAMES.get(_kind(value), 'outro tipo')}.")
+        for key, item in value.items():
+            _check_shape(item, OPEN_TABLES[where], f"{where}.{key}")
+        return
+    expected = _kind(template)
+    if expected is float and _kind(value) is int:
+        return
+    if _kind(value) is not expected:
+        if where in OWN_TYPE_MESSAGES:
+            return  # a validação dessa chave tem mensagem própria, com exemplo
+        got =_TYPE_NAMES.get(_kind(value), type(value).__name__)
+        _fail(where, f"deve ser {_TYPE_NAMES.get(expected, expected.__name__)}, não {got}.")
+    if expected is dict:
+        for key, item in value.items():
+            if key not in template:
+                _unknown(key, f"{where}.{key}" if where else key, template)
+            _check_shape(item, template[key], f"{where}.{key}" if where else key)
+    elif expected is list:
+        element = LIST_ITEMS.get(where, template[0] if template else "")
+        for index, item in enumerate(value):
+            _check_shape(item, element, f"{where}[{index}]")
+
+
+def title_pattern_for(types: dict[str, Any]) -> str:
+    """O padrão de título de PR com os prefixos de todos os tipos, mais ``revert``."""
+    prefixes = [prefix for spec in types.values() for prefix in spec.get("prefixes", [])]
+    names = "|".join(re.escape(prefix) for prefix in dict.fromkeys([*prefixes, "revert"]))
+    return rf"^({names})(\([\w./ -]+\))?!?: \S.*"
+
+
 class Config:
     """Acesso tipado ao dicionário validado."""
 
@@ -144,7 +211,12 @@ class Config:
         self.language: str = str(language)
         if "language" in raw:
             raw["language"] = self.language
-        self.data = _merge(defaults_for(self.language), raw)
+        defaults = defaults_for(self.language)
+        _check_shape(raw, {**defaults, "language": ""}, "")
+        self.data = _merge(defaults, raw)
+        if "types" in raw and "title_pattern" not in raw.get("pr", {}):
+            # Um tipo novo (`hotfix`) vale no título do PR sem o projeto reescrever o padrão.
+            self.data["pr"]["title_pattern"] = title_pattern_for(self.data["types"])
         self.path = path
         self.root = root or Path.cwd()
         self._validate()
@@ -172,6 +244,10 @@ class Config:
                 _fail(f"types.{name}.prefixes", "precisa de ao menos um prefixo de commit e branch.")
             if spec.get("section", FALLBACK_SECTION) not in section_ids:
                 _fail(f"types.{name}.section", "não corresponde a um id de `changelog.sections`.")
+        for hidden in d["changelog"]["hide"]:
+            if hidden not in section_ids:
+                accepted = ", ".join(f"`{name}`" for name in sorted(str(i) for i in section_ids))
+                _fail("changelog.hide", f"tem `{hidden}`, que não é id de `changelog.sections` ({accepted}).")
         for kind, level in d["commits"]["levels"].items():
             if level not in LEVELS:
                 _fail(f"commits.levels.{kind}", f"deve ser um de {', '.join(LEVELS)}.")
@@ -195,6 +271,17 @@ class Config:
                 _fail(key, "precisa de exatamente um entre `search` e `regex`.")
             if entry.get("regex") and "replace" not in entry:
                 _fail(f"{key}.replace", "é obrigatório com `regex`.")
+            if entry.get("search") and not CURRENT_MARKER.search(entry["search"]):
+                _fail(
+                    f"{key}.search",
+                    "precisa de um marcador `{current…}` (por exemplo `version = \"{current}\"`): sem ele a troca "
+                    "não muda nada.",
+                )
+            if entry.get("regex"):
+                try:
+                    re.compile(entry["regex"])
+                except re.error as exc:
+                    _fail(f"{key}.regex", f"não é uma expressão regular válida: {exc}.")
             if not isinstance(entry.get("count", 1), int) or entry.get("count", 1) < 1:
                 _fail(f"{key}.count", "deve ser um inteiro maior que zero.")
         for index, entry in enumerate(v["public_surfaces"]):
@@ -436,6 +523,8 @@ def load(root: Path | None = None) -> Config:
         return cfg
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        raise ConfigError(f"{path}: não está em UTF-8; salve o arquivo em UTF-8.") from None
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"{path}: {exc}") from exc
     cfg = Config(data, path=path, root=root)

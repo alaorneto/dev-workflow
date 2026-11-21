@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import support  # noqa: F401  (põe scripts/ no sys.path antes de importar devflow)
+import support  # põe scripts/ no sys.path antes de importar devflow
 from devflow import i18n
 from devflow.config import Config, ConfigError, load
 from devflow.plan import Change, Links, Plan, _glob_match, resolve_request, surface_hits, validate_analysis
@@ -41,12 +41,15 @@ from devflow.text import (
     meaningful,
     parse_conventional,
     referenced_issues,
+    section,
     sections,
     slugify,
+    unclosed_list_items,
 )
 
 V = Version.parse
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+SKILL_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SemverTest(unittest.TestCase):
@@ -143,6 +146,34 @@ class TextTest(unittest.TestCase):
         self.assertIn("## falso", found["resumo"])
         self.assertEqual(checkboxes(found["critérios de aceite"]), [(True, "a"), (False, "b")])
 
+    def test_only_what_github_shows_is_a_reference(self):
+        self.assertEqual(referenced_issues("<!-- Closes #9 -->"), [])
+        self.assertEqual(referenced_issues("<!--\nCloses #9\n-->\nRefs #2"), [2])
+        self.assertEqual(referenced_issues("```\nCloses #9\n```\n~~~\nRefs #8\n~~~\nRefs #3"), [3])
+        self.assertEqual(referenced_issues("veja `Closes #9` e ``Refs #8``"), [])
+        self.assertEqual(referenced_issues("Closes #9", closing_only=True), [9])
+
+    def test_a_list_links_every_issue_but_github_only_closes_the_first(self):
+        self.assertEqual(referenced_issues("Refs #5, #6 and #7"), [5, 6, 7])
+        self.assertEqual(referenced_issues("Closes #5, #6"), [5, 6])
+        self.assertEqual(referenced_issues("Closes #5, #6", closing_only=True), [5])
+        self.assertEqual(unclosed_list_items("Closes #5, #6\nCloses #7"), [6])
+        self.assertEqual(unclosed_list_items("Closes #5, closes #6"), [])
+        self.assertEqual(unclosed_list_items("Refs #5, #6"), [])
+
+    def test_a_subsection_does_not_end_its_section(self):
+        found = sections("## Resumo\na\n### Detalhes\nb\n## Versão\nc")
+        self.assertEqual(found["resumo"], "a\n### Detalhes\nb")
+        self.assertEqual(found["detalhes"], "b")
+        self.assertEqual(found["versão"], "c")
+        self.assertEqual(sections("### Contexto\nx\n\n### Escopo\ny"), {"contexto": "x", "escopo": "y"})
+
+    def test_a_commented_heading_is_not_a_section_and_titles_are_normalized(self):
+        found = sections("## Resumo\na\n<!--\n## Versão\n-->\nb")
+        self.assertNotIn("versão", found)
+        self.assertIn("b", found["resumo"])
+        self.assertEqual(section("##   Testes  executados:\nok", "testes executados"), "ok")
+
     def test_template_leftovers_are_not_content(self):
         self.assertEqual(meaningful("<!-- dica -->\n- \n-\n- [ ] \n_No response_\n"), "")
         self.assertEqual(meaningful("<!-- dica -->\n- `make test` — ok"), "- `make test` — ok")
@@ -163,7 +194,50 @@ class TextTest(unittest.TestCase):
     def test_slug(self):
         self.assertEqual(slugify("Corrigir a origem pública do e-mail!"), "corrigir-a-origem-publica-do-e-mail")
         self.assertLessEqual(len(slugify("x" * 200)), 40)
+        self.assertEqual(slugify("exportar o relatorio mensal em csv com filtros"), "exportar-o-relatorio-mensal-em-csv-com")
+        self.assertEqual(slugify("abcd efgh", limit=4), "abcd")
         self.assertEqual(slugify("???"), "trabalho")
+
+
+class ConfigShapeTest(unittest.TestCase):
+    """Erro de digitação na configuração aparece na carga, com a chave e a correção provável."""
+
+    def assertRefused(self, data, *fragments):
+        with self.assertRaises(ConfigError) as raised:
+            Config(data)
+        for fragment in fragments:
+            self.assertIn(fragment, str(raised.exception))
+
+    def test_an_unknown_key_suggests_the_closest_one(self):
+        self.assertRefused({"pr": {"severity": {"titel": "off"}}}, "`pr.severity.titel`", "`title`")
+        self.assertRefused({"releese": {"mode": "direct"}}, "`releese`", "`release`")
+        self.assertRefused({"versioning": {"files": [{"path": "V", "serch": "{current}"}]}}, "files[0].serch")
+        self.assertRefused({"types": {"bug": {"prefixes": ["fix"], "levle": "patch"}}}, "types.bug.levle", "`level`")
+
+    def test_a_wrong_type_is_refused_with_the_key(self):
+        self.assertRefused({"pr": {"exempt_authors": "dependabot[bot]"}}, "`pr.exempt_authors`", "lista")
+        self.assertRefused({"versioning": {"enabled": "yes"}}, "`versioning.enabled`", "booleano")
+        self.assertRefused({"release": {"mark": ["comment", 3]}}, "`release.mark[1]`")
+        self.assertRefused({"labels": {"extra": []}}, "`labels.extra`", "tabela")
+
+    def test_a_search_without_a_current_marker_and_a_broken_regex_are_refused(self):
+        self.assertRefused({"versioning": {"files": [{"path": "V", "search": "version"}]}}, "search", "{current")
+        self.assertRefused({"versioning": {"files": [{"path": "V", "regex": "(", "replace": "x"}]}}, "regex")
+        Config({"versioning": {"files": [{"path": "V", "search": 'v = "{current_pep440}"'}]}})
+
+    def test_a_new_type_prefix_is_accepted_in_the_pr_title(self):
+        types = dict(Config().types)
+        types["hotfix"] = {"prefixes": ["hotfix"], "level": "patch", "section": "fixes"}
+        cfg = Config({"types": types})
+        self.assertRegex("hotfix: corrige o login", cfg.pr["title_pattern"])
+        self.assertRegex("feat(api)!: nova rota", cfg.pr["title_pattern"])
+        self.assertNotRegex("wip: algo", cfg.pr["title_pattern"])
+        self.assertEqual(Config().pr["title_pattern"], Config({"language": "pt-BR"}).pr["title_pattern"])
+
+    def test_the_configurations_shipped_with_the_skill_are_valid(self):
+        import tomllib
+
+        Config(tomllib.loads((SKILL_ROOT / ".github" / "dev-workflow.toml").read_text(encoding="utf-8")))
 
 
 class ConfigTest(unittest.TestCase):

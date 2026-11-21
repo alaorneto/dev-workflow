@@ -30,6 +30,7 @@ from .semver import (
 )
 from .text import (
     MERGE_PR,
+    REVERTS,
     SQUASH_SUFFIX,
     breaking_notes,
     marked_value,
@@ -95,6 +96,7 @@ class Change:
     analyzed: bool = False
     pending: bool = False  # PR ainda aberto, incluído numa prévia
     fresh: bool = True  # novo: ainda não saiu em nenhuma pré-release do ciclo em andamento
+    head_sha: str = ""  # último commit do PR (``head.sha`` da API), que a análise precisa ter visto
 
     @property
     def key(self) -> str:
@@ -350,6 +352,8 @@ class Collector:
         self.cfg, self.repo, self.github = cfg, repo, github
         self._pulls: dict[int, dict[str, Any] | None] = {}
         self._issues: dict[int, dict[str, Any] | None] = {}
+        # Notas para o plano: issues citadas sem exatamente um label de tipo.
+        self.notes: list[str] = []
 
     def pull(self, number: int) -> dict[str, Any] | None:
         if number not in self._pulls:
@@ -397,6 +401,14 @@ class Collector:
                 continue
             types = sorted(labels & set(self.cfg.type_labels))
             kind = types[0] if len(types) == 1 else None
+            if kind is None:
+                found = ", ".join(f"`{name}`" for name in types) or "nenhum"
+                note = (
+                    f"#{number} (citada por {change.key}) não tem exatamente um label de tipo ({found}): ela não "
+                    "decide o nível nem a seção do changelog. Deixe um só tipo na issue."
+                )
+                if note not in self.notes:
+                    self.notes.append(note)
             infos.append(IssueInfo(number, str(data.get("title", "")), kind, number in closing))
         return infos
 
@@ -444,6 +456,7 @@ class Collector:
             labels=label_names(data),
             body=str(data.get("body") or ""),
             pending=bool(data) and not data.get("merged", bool(data.get("merged_at"))),
+            head_sha=str((data.get("head") or {}).get("sha") or ""),
         )
 
     def collect(self, base: str | None, head: str, cycle: Sequence[str] = ()) -> list[Change]:
@@ -475,12 +488,49 @@ class Collector:
             change.surfaces += surface_hits(self.repo.name_status(parent, commit.sha), self.cfg)
         for change in changes.values():
             change.fresh = unreleased is None or change.sha in unreleased
-        return self.finish(list(changes.values()))
+        return self.finish(self._drop_reverted(list(changes.values())))
+
+    def _drop_reverted(self, changes: list[Change]) -> list[Change]:
+        """Tira o par mudança + revert quando os dois estão pendentes: nada dele chega a quem usa.
+
+        Um revert é reconhecido pela linha ``This reverts commit <sha>`` que o git e o botão do
+        GitHub escrevem. Ele anula a mudança cujo commit na branch (merge ou squash) ou cujos commits
+        todos ele reverte. Revert de algo já publicado não tem o original no intervalo e continua
+        contando; o mesmo quando só um dos dois já saiu numa pré-release do ciclo.
+        """
+        dropped: set[int] = set()
+        for index, revert in enumerate(changes):
+            commits = revert.commits or []
+            if not commits or not all(commit.subject.startswith('Revert "') for commit in commits):
+                continue
+            targets = [sha for commit in commits for sha in REVERTS.findall(commit.body)]
+            if not targets:
+                continue
+            for other_index, original in enumerate(changes):
+                if other_index == index or other_index in dropped or original.fresh != revert.fresh:
+                    continue
+                own = [original.sha, *(commit.sha for commit in original.commits)]
+                # Todo sha revertido é desta mudança, e o revert a desfaz inteira: o commit dela na
+                # branch (merge ou squash) ou cada um dos commits que ela trouxe.
+                belongs = all(any(sha.startswith(target) for sha in own) for target in targets)
+                whole = any(original.sha.startswith(target) for target in targets) or (
+                    bool(original.commits)
+                    and all(any(commit.sha.startswith(target) for target in targets) for commit in original.commits)
+                )
+                if belongs and whole:
+                    dropped.update((index, other_index))
+                    self.notes.append(
+                        f"{revert.key} reverte {original.key} ({original.title}) antes da release: os dois saem "
+                        "do cálculo do nível e do changelog."
+                    )
+                    break
+        return [change for index, change in enumerate(changes) if index not in dropped]
 
     def pending_pr(self, number: int, base_ref: str, head_ref: str) -> Change:
         """O PR ainda aberto, como se já estivesse mesclado em ``base_ref``."""
         change = self._pr_change(number, self.repo.resolve(head_ref), f"PR #{number}")
         change.pending = True
+        change.head_sha = change.head_sha or change.sha
         change.commits = self.repo.log(f"{base_ref}..{head_ref}", no_merges=True)
         merge_base = self.repo.git("merge-base", base_ref, head_ref)
         change.surfaces = surface_hits(self.repo.name_status(merge_base, head_ref), self.cfg)
@@ -551,24 +601,68 @@ def validate_analysis(data: Any) -> dict[str, Any]:
     }
 
 
-def apply_analyses(changes: list[Change], analyses: list[dict[str, Any]]) -> None:
+def _same_sha(one: str, other: str) -> bool:
+    shortest = min(len(one), len(other))
+    return shortest >= 7 and one[:shortest].lower() == other[:shortest].lower()
+
+
+def analysis_saw(analysis: dict[str, Any], change: Change, repo: Repo | None) -> bool:
+    """A análise viu o último commit da mudança?
+
+    Vale quando o ``head`` analisado é o último commit do PR ou o contém, ou quando contém o commit
+    que a mudança deixou na branch (análise feita depois do merge, no PR de release). Análise sem
+    ``head`` não prova o que viu e não conta.
+    """
+    head = str(analysis.get("head") or "").strip()
+    if not head:
+        return False
+    last = change.head_sha or (change.sha if change.pending else "")
+    if last and _same_sha(head, last):
+        return True
+    if repo is None or not repo.git.ok("cat-file", "-e", f"{head}^{{commit}}"):
+        return False
+    candidates = [last] if last else []
+    if not change.pending:
+        candidates.append(change.sha)
+    return any(
+        candidate and repo.git.ok("cat-file", "-e", f"{candidate}^{{commit}}")
+        and repo.git.ok("merge-base", "--is-ancestor", candidate, head)
+        for candidate in candidates
+    )
+
+
+def apply_analyses(changes: list[Change], analyses: list[dict[str, Any]], repo: Repo | None = None) -> list[str]:
     """Acrescenta a cada mudança o veredito da análise mais recente que a cobre.
 
-    A análise só acrescenta sinais; como o nível é sempre o maior, ela eleva e nunca reduz.
+    A análise só acrescenta sinais; como o nível é sempre o maior, ela eleva e nunca reduz. Um
+    veredito por PR só vale se a análise viu o último commit do PR (``analysis_saw``); senão a
+    mudança fica sem análise e a nota devolvida diz por quê.
     """
+    notes: list[str] = []
     for change in changes:
         verdict = None
+        stale = False
         for analysis in analyses:  # em ordem cronológica: a última que cita a mudança vence
             for entry in analysis["changes"]:
                 by_pr = change.number is not None and entry.get("pr") == change.number
-                by_sha = "commit" in entry and any(c.sha.startswith(entry["commit"]) for c in [*change.commits, change])
+                shas = [*(commit.sha for commit in change.commits), change.sha]
+                by_sha = "commit" in entry and any(sha.startswith(entry["commit"]) for sha in shas)
+                if by_pr and not analysis_saw(analysis, change, repo):
+                    stale = True
+                    continue
                 if by_pr or (change.number is None and by_sha):
-                    verdict = entry
+                    verdict, stale = entry, False
         if verdict is None:
+            if stale:
+                notes.append(
+                    f"{change.key}: análise anterior ao último commit do PR; ela não conta e a mudança fica sem "
+                    "análise até uma nova ser registrada."
+                )
             continue
         change.signals = [signal for signal in change.signals if signal.source != "agente"]
         change.signals.append(Signal(verdict["level"], "agente", verdict["summary"], bool(verdict["breaking"])))
         change.analyzed = True
+    return notes
 
 
 def floor_requirement(cfg: Config, repo: Repo) -> tuple[Version, str] | None:
@@ -691,7 +785,7 @@ def build_plan(
     changes = collector.collect(base_tag, head, list(line.cycle))
     if pending is not None:
         changes.append(collector.pending_pr(pending[0], head, pending[1]))
-    apply_analyses(changes, [*collector.recorded_analyses(changes), *(extra_analyses or [])])
+    analysis_notes = apply_analyses(changes, [*collector.recorded_analyses(changes), *(extra_analyses or [])], repo)
     requested_by, channel, request_notes = resolve_request(changes, cfg, forced=forced, manual=prerelease)
 
     plan = Plan(
@@ -726,6 +820,8 @@ def build_plan(
             plan.problems.append(Problem("nothing", text))
         return plan
     plan.notes += request_notes
+    plan.notes += collector.notes
+    plan.notes += analysis_notes
     if plan.override:
         plan.level = plan.override.level
         target = base_version.final.bump(plan.level)  # a sobreposição é literal, inclusive para chegar a 1.0.0

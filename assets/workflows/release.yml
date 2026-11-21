@@ -37,7 +37,7 @@ permissions:
   contents: write # commit de release, tag e GitHub Release
   issues: write # comentário e milestone nas issues incluídas
   pull-requests: write # comentário nos PRs incluídos; PR de release no modo pull-request
-  actions: write # só usado se release.dispatch_workflow estiver configurado
+  actions: write # dispara release.dispatch_workflow (só gerado quando ele está configurado) # __IF_DISPATCH__
 
 concurrency:
   group: release-${{ github.ref }}
@@ -47,6 +47,7 @@ jobs:
   release:
     name: Calcular e publicar a versão
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     outputs:
       released: ${{ steps.run.outputs.released }}
       version: ${{ steps.run.outputs.version }}

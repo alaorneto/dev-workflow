@@ -182,7 +182,7 @@ cd <project>
 python3 ~/src/dev-workflow/scripts/bootstrap.py init
 ```
 
-`init` copies the skill to the project's `.claude/skills/dev-workflow/`, generates the configuration with the version files it recognizes, the workflows, the issue and PR templates, installs the `commit-msg` hook and creates the labels. Nothing that already exists is overwritten without `--force`.
+`init` copies the skill to the project's `.claude/skills/dev-workflow/` (or wherever `--skill-dir` says, e.g. `--skill-dir .agents/skills/dev-workflow`; the workflows and the hook point there), generates the configuration with the version files it recognizes, the workflows, the issue and PR templates, installs the `commit-msg` hook and creates the labels. Nothing that already exists is overwritten without `--force`. It also writes `.github/dev-workflow-manifest.json` — the skill version, where the skill lives and a hash of every generated file — which is how `update` and `uninstall` tell a generated file from a customized one.
 
 After that: review `.github/dev-workflow.toml`, commit and merge what `init` generated (workflows only take effect on the default branch), and create the baseline tag with `release.py baseline --push` — without it, the first release would consider the entire history. The full walkthrough, the repository owner's one-time steps (permissions, branch protection, secrets) and the snippet for the project's agent instructions (`AGENTS.md`, `CLAUDE.md`) are in [references/installation.md](references/installation.md).
 
@@ -196,7 +196,9 @@ python3 ~/src/dev-workflow/scripts/bootstrap.py update
 python3 .claude/skills/dev-workflow/scripts/bootstrap.py doctor
 ```
 
-`update` mirrors the copy in `.claude/skills/dev-workflow/` (removing what left the new version), regenerates the workflows and templates the project has not customized, and warns about the customized ones. The project's configuration is never replaced. Going back to an older version is refused without `--force`. Commit the result on an issue branch, like any other change.
+`update` replaces the copy at the path recorded in the manifest (removing what left the new version), regenerates the workflows and templates the project has not edited — recognized by their hash, even after a configuration change such as a new release label — removes the ones the new version no longer generates, renews the `commit-msg` hook, and warns about the customized ones. It is all or nothing: a failure midway leaves the previous copy and files intact. A project installed before the manifest existed falls back to comparing with the old template and gets a manifest on its first `update`. The project's configuration is never replaced. Going back to an older version is refused without `--force`, and so is running `update` from the installed copy. Commit the result on an issue branch, like any other change.
+
+To remove the workflow, `bootstrap.py uninstall` lists what would go and what stays; `uninstall --yes` removes only what was not customized (the skill copy, generated files, the manifest and the hook) and lists the rest.
 
 ## Configuration
 
@@ -222,7 +224,7 @@ Full reference: [references/configuration.md](references/configuration.md).
 
 | Command | What it does |
 |---|---|
-| `bootstrap.py init` / `update` / `doctor` / `install-hook` / `version` | Install, update and verify the workflow in a project |
+| `bootstrap.py init` / `update` / `uninstall` / `doctor` / `install-hook` / `version` | Install, update, remove and verify the workflow in a project |
 | `github_issues.py start <N>` | Creates the branch for an issue |
 | `github_issues.py sync-epic <E>` | Creates the native sub-issue and "blocked by" links of an epic |
 | `github_issues.py check-pr --pr <N>` | Runs the PR check locally |
@@ -243,9 +245,14 @@ The version is in `VERSION` and follows SemVer: a breaking change is anything th
 ```bash
 python3 -m unittest discover -s tests          # the whole suite (a few minutes: end-to-end tests with git)
 python3 scripts/bootstrap.py doctor            # this repository checked by its own skill
+python3 -m pip install ruff==0.17.6 mypy==2.4.1  # the versions pinned in the self-test workflow
+python3 -m ruff check .                        # lint, configured in ruff.toml
+python3 -m mypy                                # types of scripts/, configured in mypy.ini
 ```
 
-The self-test workflow (`Autoteste do skill dev-workflow`) runs the suite on Linux, Windows and macOS for every PR. The cases in `evals/` measure the agent's behaviour with the skill; run them with `claude plugin eval` or with the `skill-creator` skill.
+The self-test workflow (`Autoteste do skill dev-workflow`) runs the suite on Linux, Windows and macOS with Python 3.11, 3.12 and 3.13 (nine jobs, with Node for the Claude Code hook tests) and, in a separate job, `ruff check` and `mypy`; any of them failing fails the PR. `ruff.toml`, `mypy.ini`, `SECURITY.md` and `CONTRIBUTING.md` belong to this repository and are not copied into projects (`COPY_IGNORE` in `scripts/devflow/bootstrap.py`); in a project's copy the lint job skips its steps.
+
+Dependabot (`.github/dependabot.yml`) opens a weekly PR that bumps the actions pinned by SHA; `exempt_authors` in `.github/dev-workflow.toml` exempts it from the issue flow. It only sees `.github/workflows/`: apply the same SHAs to the templates in `assets/workflows/` in that PR (`bootstrap.py doctor` reports a rendered workflow that differs from its template). The cases in `evals/` measure the agent's behaviour with the skill; run them with `claude plugin eval` or with the `skill-creator` skill.
 
 ## Publishing your own copy
 

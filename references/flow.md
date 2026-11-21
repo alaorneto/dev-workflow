@@ -71,7 +71,7 @@ Um fechamento feito com o token do workflow não dispara outro evento `issues: c
 | Procedimento | `SKILL.md` | Passo a passo do agente |
 | Configuração | `.github/dev-workflow.toml` | Tudo que é do projeto: tipos, seções, arquivos de versão, superfícies, modo de release |
 | Hook do git | `commit-msg` (pre-commit ou `bootstrap.py install-hook`) | Commit sem referência a issue é recusado; `Refs: #N` sai do nome da branch |
-| Hook do Claude Code | `assets/claude/dev-workflow-hook.mjs` | Lembra de criar as issues ao aceitar um plano; recusa `--no-verify` e PR sem referência. Lembrete forte, não barreira |
+| Hook do Claude Code | `assets/claude/dev-workflow-hook.mjs` | Lembra de criar as issues ao aceitar um plano; recusa `--no-verify`, `-c core.hooksPath=` e PR sem referência, lendo o comando como argumentos (aspas, encadeamentos, `--body-file`). Lembrete forte, não barreira |
 | Check do PR | `pr-check.yml` → `github_issues.py check-pr`, `release.py check --tree`, `release.py preview --check`, `release.py preview`, todos da branch base | Vínculo, seções, labels e sobreposição de versão, título, coerência dos arquivos de versão, pedido de versão publicável, prévia |
 | Evidências | `pr-merged.yml` → `github_issues.py pr-merged` | Comentário de evidências nas issues |
 | Release | `release.yml` → `release.py run` | Versão, arquivos, changelog, tag, GitHub Release, marcações |
@@ -107,6 +107,16 @@ Um fechamento feito com o token do workflow não dispara outro evento `issues: c
 
 **Leitura incompleta não autoriza ação.** O GitHub devolve até 100 sub-issues ou bloqueios por página. Se a lista vier truncada, `sync-epic`, `sync-checklist` e `close-epic` param com erro em vez de fechar um epic ou criar vínculos com base em dados parciais.
 
+**Só conta a referência que o GitHub mostra.** Um `Closes #N` dentro de comentário HTML ou de bloco de código é dica do modelo ou exemplo, não vínculo; contar com ele deixaria uma dica aprovar o PR. A mesma leitura vale no check, nas evidências e no plano de versão. Uma seção vai até o próximo título do mesmo nível ou acima, para um `###` de detalhe não cortar o `##` que o contém.
+
+**A análise vale pelo que viu.** O veredito de uma análise por agente só conta se o `head` analisado é o último commit do PR ou o contém. Casar só pelo número do PR deixaria uma análise antiga liberar, com `require_analysis`, código que ninguém analisou.
+
+**Mudança revertida antes da release não existe para quem usa.** O par mudança + revert pendente sai do nível e do changelog; revert de algo já publicado é mudança como qualquer outra.
+
+**Falha passageira se repete; criação não.** Leituras e escritas idempotentes repetem em 5xx, 429 e limite secundário, com espera crescente e teto. Criar comentário, release ou PR não se repete: a reexecução da ferramenta confere antes de criar, e repetir às cegas duplicaria. Push recusado por proteção não é "a branch andou": a release para na hora, com a causa.
+
+**A configuração é conferida na carga.** Chave desconhecida e tipo errado são erro com a chave e a sugestão mais próxima; uma chave digitada errado que passasse em silêncio deixaria a regra que o projeto quis sem efeito.
+
 **Sinais determinísticos primeiro, agente como reforço.** A release nunca depende de um serviço externo estar disponível. Quando a análise falta, as notas dizem; quando o projeto exige (`require_analysis`), a release espera.
 
 **PRs incluídos são marcados com comentário e milestone, não com label.** A fonte da verdade do "já saiu" é o git; a marca é informação para quem lê. Milestone agrupa PRs e issues de uma versão numa tela nativa do GitHub; um label por versão poluiria a lista.
@@ -122,4 +132,6 @@ Um fechamento feito com o token do workflow não dispara outro evento `issues: c
 - Um repositório, uma versão. Monorepo com versões independentes por pacote não é coberto.
 - O token padrão do Actions não redispara workflows: o PR de release (modo `pull-request`) não roda checks sozinho, e a tag criada não dispara workflows `on: push: tags`. Use `release.dispatch_workflow` ou o segredo `RELEASE_TOKEN`.
 - No modo `pull-request`, um PR que entra na branch depois de o PR de release ser preparado e antes de ele ser mesclado só é reconhecido como pendente quando o PR de release entra por merge commit. Com squash ou rebase ele fica atrás da tag sem linha no changelog: exija branch atualizada (veja a instalação). Todas as linhas de manutenção dividem a mesma branch de PR de release.
+- Revert parcial feito à mão, sem a linha `This reverts commit <sha>`, não é reconhecido: a mudança e o revert contam os dois.
+- O hook `commit-msg` só lê o número de branches `<prefixo>/<N>-<slug>` com o prefixo de um tipo; outra convenção de nome exige `Refs #N` na mensagem.
 - A análise de import dinâmico, reflexão e contratos implícitos continua sendo julgamento: o agente pode errar, e por isso a sobreposição existe.

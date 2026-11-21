@@ -1,0 +1,32 @@
+# Lint do repositório do skill (o autoteste roda `ruff check`). Fica fora da cópia feita nos
+# projetos (COPY_IGNORE em scripts/devflow/bootstrap.py): o lint é de quem mantém o skill.
+target-version = "py311"
+line-length = 120
+extend-exclude = ["*-workspace"]
+
+[lint]
+select = [
+    "E",    # pycodestyle
+    "W",
+    "F",    # pyflakes
+    "I",    # ordem dos imports
+    "B",    # bugbear
+    "UP",   # sintaxe do Python 3.11
+    "SIM",
+    "C4",
+    "PIE",
+    "PGH",
+    "PLC",  # pylint (convenção, erro, aviso): os `# noqa: PLC0415` e `PLW0603` do código vêm daqui
+    "PLE",
+    "PLW",
+    "RUF",  # inclui RUF100: um `# noqa` que não silencia nada também reprova
+]
+ignore = [
+    "E501",    # o comprimento é do formatador; o que passa de 120 são mensagens
+    "RUF007",  # zip(xs, xs[1:]) é tão claro quanto itertools.pairwise
+]
+
+[lint.per-file-ignores]
+# Os testes importam dentro do teste o que depende do sys.path montado por `support`, declaram
+# atributos de classe mutáveis como dados da fixture e conferem o returncode em vez de check=True.
+"tests/**" = ["PLC0415", "RUF012", "PLW1510"]

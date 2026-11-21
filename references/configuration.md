@@ -2,6 +2,8 @@
 
 Os scripts procuram, nesta ordem: a variável `DEV_WORKFLOW_CONFIG`, `.github/dev-workflow.toml`, `dev-workflow.toml`, `.dev-workflow.toml`. Sem arquivo, valem os padrões (suficientes para o hook `commit-msg`). As tabelas do arquivo se sobrepõem aos padrões chave a chave; `types`, `labels.extra`, `issues.sections`, `commits.levels` e todas as listas substituem o padrão por inteiro. Valor inválido é recusado com a chave na mensagem. Modelo comentado: `assets/dev-workflow.toml`.
 
+**Validação.** A configuração é conferida na carga, antes de qualquer comando: chave desconhecida é erro e a mensagem sugere a chave mais parecida (`pr.severity.titel` → `title`); valor de tipo errado é erro com a chave (`exempt_authors = "dependabot[bot]"` precisa ser lista); `search` de `[[versioning.files]]` precisa de um marcador `{current…}` e `regex` precisa compilar. Sem `pr.title_pattern` explícito, um projeto que redefine `[types]` aceita no título do PR os prefixos de todos os tipos, mais `revert`: um tipo novo com prefixo `hotfix` vale sem mexer no padrão. Uma issue citada por um PR sem exatamente um label de tipo aparece como nota no plano de versão, porque o tipo dela não conta.
+
 ## `schema`
 
 Sempre `1`.
@@ -242,4 +244,7 @@ jobs:
 | `DEV_WORKFLOW_CONFIG` | Caminho alternativo da configuração |
 | `DEV_WORKFLOW_OFFLINE=1` | Não consulta o GitHub: o plano sai só do histórico do git |
 | `DEV_WORKFLOW_GH` | Lista JSON com o comando que substitui `gh` (usada pelos testes) |
+| `DEV_WORKFLOW_TIMEOUT` | Tempo limite, em segundos, de cada chamada a `git` e `gh` (padrão 120). Uma chamada que passa dele termina com erro que diz o comando e o tempo |
+| `DEV_WORKFLOW_RETRIES` | Tentativas de uma chamada à API em falha passageira, contando a primeira (padrão 4). Repete leituras e escritas idempotentes (`GET`, `PATCH`, `PUT`, `DELETE`) em 5xx, 429 e limite secundário, esperando 2, 4, 8… segundos, até 30. Criação (`POST` de comentário, release, PR) não é repetida: a reexecução confere antes de criar |
+| `GH_HOST` | Servidor do GitHub Enterprise: o remoto `origin` desse servidor também identifica o repositório (como `GITHUB_SERVER_URL` no Actions) |
 | `RELEASE_FORCE`, `RELEASE_LEVEL`, `RELEASE_REASON`, `RELEASE_PRERELEASE`, `RELEASE_DRY_RUN`, `RELEASE_BRANCH` | Equivalentes das opções de `release.py run`, preenchidas pelo workflow |
